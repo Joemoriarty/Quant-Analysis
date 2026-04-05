@@ -1,0 +1,41 @@
+# Virtual environments
+.venv/
+.venv_linux_backup/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE / OS
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local data & runtime (do not commit)
+data/cache/
+db/*.db
+db/*.db-shm
+db/*.db-wal
+data/paper_trading/
+data/watchlist/
+err.txt
+out.txt
+err_verify.txt
+out_verify.txt
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Logs / temp
+*.log
+.tmp/
