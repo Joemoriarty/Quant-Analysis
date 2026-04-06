@@ -101,7 +101,7 @@ def load_db_status():
 
 def render_data_error(message: str) -> None:
     st.error(message)
-    st.info("如果你刚启动项目，请确认当前使用的是 `.venv/bin/python run.py`。")
+    st.info("如果这是云端部署，请确认启动命令是 `streamlit run web/app.py --server.port $PORT --server.address 0.0.0.0`。如果是本地运行，可使用 `python run.py`。")
 
 
 def render_metrics(metrics: dict) -> None:

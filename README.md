@@ -10,6 +10,14 @@
 .venv/bin/python run.py
 ```
 
+Render 部署建议直接使用：
+
+```bash
+streamlit run web/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
+```
+
+不要把 `run.py` 再包一层 `streamlit run`，也不要填写不存在的 `web/run.py`。仓库已提供 `render.yaml`，可以直接按 Blueprint 导入。
+
 ## 已处理的稳定性问题
 
 - 首屏不再在模块导入时直接请求股票列表
