@@ -28,14 +28,23 @@ DEFAULT_CONFIG = DEFAULT_SCORING_CONFIG
 
 @lru_cache(maxsize=4096)
 def _cached_fundamental_snapshot(symbol: str, name: str):
-    return load_or_fetch_fundamental_snapshot(symbol, fallback_name=name)
+    return load_or_fetch_fundamental_snapshot(symbol, fallback_name=name, prefer_cache=True)
 
 
 @lru_cache(maxsize=4096)
 def _cached_industry_view(symbol: str, name: str):
-    fundamental_snapshot, valuation_snapshot = load_or_fetch_fundamental_snapshot(symbol, fallback_name=name)
+    fundamental_snapshot, valuation_snapshot = load_or_fetch_fundamental_snapshot(
+        symbol,
+        fallback_name=name,
+        prefer_cache=True,
+    )
     valuation_snapshot = valuation_snapshot or {}
-    industry_membership = resolve_industry_membership(symbol, valuation_snapshot=valuation_snapshot, max_age_days=30)
+    industry_membership = resolve_industry_membership(
+        symbol,
+        valuation_snapshot=valuation_snapshot,
+        max_age_days=30,
+        allow_live_fetch=False,
+    )
     if industry_membership and not valuation_snapshot.get("industry"):
         valuation_snapshot = dict(valuation_snapshot)
         valuation_snapshot["industry"] = industry_membership.get("industry_name")
@@ -49,6 +58,7 @@ def _cached_industry_view(symbol: str, name: str):
             "fundamental_snapshot": fundamental_snapshot,
             "valuation_snapshot": valuation_snapshot,
             "industry_membership": industry_membership,
+            "prefer_cache_only": True,
         }
     )
     return _extract_industry_comparison_view(comparison_results)
@@ -113,7 +123,7 @@ def run_unified_selection(stock_dict, config=None):
     min_industry_score = int(thresholds.get("min_industry_score", 40))
     min_event_score = int(thresholds.get("min_event_score", 25))
 
-    market_snapshot = load_or_fetch_market_sentiment_snapshot()
+    market_snapshot = load_or_fetch_market_sentiment_snapshot(prefer_cache=True)
     market_summary, market_explanations, market_risks = _build_market_sentiment_view(market_snapshot)
     market_sentiment_score = int(market_summary.get("score", 50))
     market_sentiment_state = str(market_summary.get("state", "中性"))

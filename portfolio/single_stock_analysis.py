@@ -879,7 +879,7 @@ def _build_candlestick_chart(chart_df: pd.DataFrame):
     return (rule + bar + ma20 + ma60 + support + resistance).properties(height=360)
 
 
-def analyze_single_stock(symbol: str, name: str) -> dict:
+def analyze_single_stock(symbol: str, name: str, prefer_cache_only: bool = False) -> dict:
     df = get_stock_data(symbol)
     try:
         df, metrics, latest = _calculate_metrics(df)
@@ -900,8 +900,17 @@ def analyze_single_stock(symbol: str, name: str) -> dict:
     hold_or_sell_view = _build_hold_or_sell_view(metrics, trend_score, latest)
     chart = _build_candlestick_chart(chart_df)
 
-    fundamental_snapshot, valuation_snapshot = load_or_fetch_fundamental_snapshot(symbol, fallback_name=name)
-    industry_membership = resolve_industry_membership(symbol, valuation_snapshot=valuation_snapshot, max_age_days=30)
+    fundamental_snapshot, valuation_snapshot = load_or_fetch_fundamental_snapshot(
+        symbol,
+        fallback_name=name,
+        prefer_cache=prefer_cache_only,
+    )
+    industry_membership = resolve_industry_membership(
+        symbol,
+        valuation_snapshot=valuation_snapshot,
+        max_age_days=30,
+        allow_live_fetch=not prefer_cache_only,
+    )
     if valuation_snapshot is None:
         valuation_snapshot = {}
     if industry_membership and not valuation_snapshot.get("industry"):
@@ -914,7 +923,7 @@ def analyze_single_stock(symbol: str, name: str) -> dict:
         valuation_snapshot,
     )
 
-    market_sentiment_snapshot = load_or_fetch_market_sentiment_snapshot()
+    market_sentiment_snapshot = load_or_fetch_market_sentiment_snapshot(prefer_cache=prefer_cache_only)
     market_sentiment_summary, market_sentiment_explanations, market_sentiment_risks = _build_market_sentiment_view(
         market_sentiment_snapshot
     )
@@ -930,6 +939,7 @@ def analyze_single_stock(symbol: str, name: str) -> dict:
             "company_events": company_events,
             "industry_membership": industry_membership,
             "metrics": metrics,
+            "prefer_cache_only": prefer_cache_only,
         }
     )
     (

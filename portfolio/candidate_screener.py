@@ -44,7 +44,7 @@ def _screen_one_consistent_candidate(row: pd.Series, config: dict) -> dict | Non
     symbol = str(row["code"]).zfill(6)
     name = str(row.get("name", symbol))
     try:
-        analysis = analyze_single_stock(symbol, name)
+        analysis = analyze_single_stock(symbol, name, prefer_cache_only=True)
     except (DataFetchError, ValueError):
         return None
 

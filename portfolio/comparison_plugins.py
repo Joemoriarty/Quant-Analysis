@@ -105,12 +105,18 @@ def _load_industry_peer_context(context: dict) -> tuple[str, dict, dict, pd.Data
     valuation = context.get("valuation_snapshot") or {}
     fundamental = context.get("fundamental_snapshot") or {}
     industry_membership = context.get("industry_membership") or {}
+    prefer_cache = bool(context.get("prefer_cache_only", False))
     symbol = str(context.get("symbol") or "")
     industry_name = str(valuation.get("industry") or industry_membership.get("industry_name") or "").strip()
     if not industry_name:
         return "", fundamental, valuation, None
 
-    peers = load_or_fetch_industry_peer_snapshots(industry_name, exclude_symbol=symbol, limit=20)
+    peers = load_or_fetch_industry_peer_snapshots(
+        industry_name,
+        exclude_symbol=symbol,
+        limit=20,
+        prefer_cache=prefer_cache,
+    )
     if not peers:
         return industry_name, fundamental, valuation, None
 

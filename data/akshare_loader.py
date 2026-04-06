@@ -8,8 +8,8 @@ import akshare as ak
 import pandas as pd
 import requests
 
+from storage_paths import CACHE_DIR, ensure_storage_dirs
 
-CACHE_DIR = Path(__file__).resolve().parent / "cache"
 SYMBOL_CACHE_FILE = CACHE_DIR / "symbols.csv"
 LOOKUP_CACHE_FILE = CACHE_DIR / "lookup_symbols.csv"
 HIST_REQUIRED_COLUMNS = {"date", "close", "open", "high", "low", "volume"}
@@ -26,7 +26,7 @@ class DataFetchError(RuntimeError):
 
 
 def _ensure_cache_dir() -> None:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_storage_dirs()
 
 
 def _hist_cache_file(symbol: str) -> Path:
@@ -459,6 +459,20 @@ def get_stock_catalog(limit: int = DEFAULT_SYMBOL_LIMIT, use_cache: bool = True)
         )
 
     raise DataFetchError(refresh_error or "获取股票列表失败")
+
+
+def get_cached_stock_catalog(limit: int = DEFAULT_SYMBOL_LIMIT) -> pd.DataFrame:
+    cached = _read_symbol_cache(limit)
+    if cached.empty:
+        return cached
+    cache_age = _cache_age_seconds(SYMBOL_CACHE_FILE)
+    freshness = "cache_fresh" if cache_age <= CATALOG_CACHE_MAX_AGE_SECONDS else "cache_stale"
+    return _attach_source_metadata(
+        cached,
+        source=freshness,
+        cache_age_seconds=cache_age,
+        pool_description=f"近期强势股票池 Top {len(cached)}",
+    )
 
 
 def get_stock_symbols(limit: int = DEFAULT_SYMBOL_LIMIT, use_cache: bool = True) -> list[str]:

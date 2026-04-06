@@ -2,5 +2,12 @@ services:
   - type: web
     env: python
     name: quant-analysis
+    disk:
+      name: quant-analysis-storage
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: APP_STORAGE_DIR
+        value: /var/data/quant-analysis
     buildCommand: pip install -r requirements.txt
     startCommand: streamlit run web/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false

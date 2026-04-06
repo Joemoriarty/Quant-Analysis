@@ -60,6 +60,16 @@ def _safe_growth_rate(current_value, previous_value):
     return float((current - previous) / abs(previous) * 100)
 
 
+def _snapshot_is_recent(snapshot: dict | None, max_age_hours: float, time_keys: list[str]) -> bool:
+    if not snapshot:
+        return False
+    for key in time_keys:
+        timestamp = pd.to_datetime(snapshot.get(key), errors="coerce")
+        if not pd.isna(timestamp):
+            return timestamp >= pd.Timestamp.now() - pd.Timedelta(hours=max_age_hours)
+    return False
+
+
 def _fetch_cninfo_industry_membership(symbol: str) -> dict | None:
     date_candidates = ["变更日期", "日期"]
     level_candidates = [
@@ -231,7 +241,12 @@ def fetch_fundamental_snapshot(symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]
     return fundamental_df, valuation_df
 
 
-def load_or_fetch_fundamental_snapshot(symbol: str, fallback_name: str | None = None) -> tuple[dict | None, dict | None]:
+def load_or_fetch_fundamental_snapshot(
+    symbol: str,
+    fallback_name: str | None = None,
+    max_age_hours: float = 24.0,
+    prefer_cache: bool = False,
+) -> tuple[dict | None, dict | None]:
     from db.market_db import (
         get_latest_fundamental_snapshot,
         get_latest_industry_membership,
@@ -240,6 +255,26 @@ def load_or_fetch_fundamental_snapshot(symbol: str, fallback_name: str | None = 
         save_industry_membership,
         save_valuation_snapshot,
     )
+
+    fundamental = get_latest_fundamental_snapshot(symbol)
+    valuation = get_latest_valuation_snapshot(symbol)
+    membership = get_latest_industry_membership(symbol)
+    if fundamental and fallback_name and not fundamental.get("name"):
+        fundamental["name"] = fallback_name
+    if valuation and fallback_name and not valuation.get("name"):
+        valuation["name"] = fallback_name
+    if valuation is not None and not valuation.get("industry") and membership:
+        valuation["industry"] = membership.get("industry_name")
+        valuation["industry_source"] = membership.get("source")
+
+    if prefer_cache and (fundamental or valuation):
+        return fundamental, valuation
+
+    if (
+        _snapshot_is_recent(fundamental, max_age_hours, ["snapshot_date", "updated_at"])
+        or _snapshot_is_recent(valuation, max_age_hours, ["snapshot_date", "updated_at"])
+    ):
+        return fundamental, valuation
 
     try:
         fundamental_df, valuation_df = fetch_fundamental_snapshot(symbol)
@@ -268,16 +303,6 @@ def load_or_fetch_fundamental_snapshot(symbol: str, fallback_name: str | None = 
         valuation = valuation_df.to_dict(orient="records")[0] if not valuation_df.empty else None
         return fundamental, valuation
     except DataFetchError:
-        fundamental = get_latest_fundamental_snapshot(symbol)
-        valuation = get_latest_valuation_snapshot(symbol)
-        membership = get_latest_industry_membership(symbol)
-        if fundamental and fallback_name and not fundamental.get("name"):
-            fundamental["name"] = fallback_name
-        if valuation and fallback_name and not valuation.get("name"):
-            valuation["name"] = fallback_name
-        if valuation is not None and not valuation.get("industry") and membership:
-            valuation["industry"] = membership.get("industry_name")
-            valuation["industry_source"] = membership.get("source")
         return fundamental, valuation
 
 
@@ -459,6 +484,7 @@ def load_or_fetch_industry_peer_snapshots(
     industry_name: str,
     exclude_symbol: str | None = None,
     limit: int = 6,
+    prefer_cache: bool = False,
 ) -> list[dict]:
     from db.market_db import (
         get_industry_peer_snapshots,
@@ -493,6 +519,8 @@ def load_or_fetch_industry_peer_snapshots(
 
     local_rows = get_industry_peer_snapshots(industry_name, exclude_symbol=exclude_symbol, limit=max(limit * 5, 20))
     usable_local_rows = [row for row in local_rows if _has_quant_snapshot(row)]
+    if prefer_cache and usable_local_rows:
+        return usable_local_rows[:limit]
 
     cached_members = list_industry_members(industry_name, exclude_symbol=exclude_symbol, limit=max(limit * 6, 30))
     history_members = list_industry_members_from_history(industry_name, exclude_symbol=exclude_symbol, limit=max(limit * 6, 30))
@@ -502,6 +530,9 @@ def load_or_fetch_industry_peer_snapshots(
         peer_symbols = [{"symbol": item["symbol"], "name": item.get("name") or item["symbol"]} for item in history_members]
     else:
         peer_symbols = fetch_industry_peer_symbols(industry_name, exclude_symbol=exclude_symbol, limit=max(limit * 6, 30))
+
+    if prefer_cache:
+        return usable_local_rows[:limit]
 
     if not peer_symbols:
         try:

@@ -18,6 +18,19 @@ streamlit run web/app.py --server.port $PORT --server.address 0.0.0.0 --server.h
 
 不要把 `run.py` 再包一层 `streamlit run`，也不要填写不存在的 `web/run.py`。仓库已提供 `render.yaml`，可以直接按 Blueprint 导入。
 
+如果希望缓存、数据库、观察列表、模拟交易记录在 Render 重启后继续保留，请挂载 Persistent Disk，并把 `APP_STORAGE_DIR` 指向持久盘目录。当前仓库的 Blueprint 默认使用：
+
+```text
+APP_STORAGE_DIR=/var/data/quant-analysis
+```
+
+启用后，下列内容都会持久化到该目录下：
+
+- `db/market_data.db`
+- `data/cache/*.csv`
+- `data/watchlist/watchlist.csv`
+- `data/paper_trading/*`
+
 ## 已处理的稳定性问题
 
 - 首屏不再在模块导入时直接请求股票列表

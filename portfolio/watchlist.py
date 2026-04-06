@@ -1,22 +1,19 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 import re
 
 import pandas as pd
 
 from data.akshare_loader import DataFetchError
 from portfolio.single_stock_analysis import analyze_single_stock, resolve_stock_query
+from storage_paths import WATCHLIST_DIR, ensure_storage_dirs
 
-
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-WATCHLIST_DIR = DATA_DIR / "watchlist"
 WATCHLIST_FILE = WATCHLIST_DIR / "watchlist.csv"
 
 
 def _ensure_watchlist_dir() -> None:
-    WATCHLIST_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_storage_dirs()
 
 
 def _safe_int(value, default: int = 0) -> int:

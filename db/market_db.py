@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
 
 import pandas as pd
 
+from storage_paths import DB_DIR, ensure_storage_dirs
 
-DB_DIR = Path(__file__).resolve().parent
 DB_PATH = DB_DIR / "market_data.db"
 
 
 def _connect() -> sqlite3.Connection:
-    DB_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_storage_dirs()
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
@@ -1216,3 +1215,94 @@ def get_recent_best_optimizer_runs(strategy_name: str = "alpha_ensemble", limit:
             }
         )
     return results
+
+
+def get_latest_strategy_recommendations(strategy_name: str | None = None) -> dict | None:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT snapshot_date
+            FROM strategy_recommendations
+            ORDER BY snapshot_date DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not row:
+            return None
+        snapshot_date = row[0]
+        table = pd.read_sql_query(
+            """
+            SELECT snapshot_date, symbol, name, score, action, reason, weight, close_price, extra_json
+            FROM strategy_recommendations
+            WHERE snapshot_date = ?
+            ORDER BY score DESC, symbol ASC
+            """,
+            conn,
+            params=(snapshot_date,),
+        )
+
+    if table.empty:
+        return None
+
+    extra_series = table["extra_json"].apply(
+        lambda value: json.loads(value) if isinstance(value, str) and value.strip() else {}
+    )
+    extra_df = pd.DataFrame(extra_series.tolist()) if not extra_series.empty else pd.DataFrame()
+    table = pd.concat([table.drop(columns=["extra_json", "snapshot_date"]), extra_df], axis=1)
+    table["symbol"] = table["symbol"].astype(str).str.zfill(6)
+    table["display_name"] = table.apply(
+        lambda row: f"{row['symbol']} {row['name']}".strip() if pd.notna(row.get("name")) else row["symbol"],
+        axis=1,
+    )
+    return {
+        "as_of_date": pd.Timestamp(snapshot_date),
+        "table": table.reset_index(drop=True),
+    }
+
+
+def get_latest_backtest_run(strategy_name: str | None = None) -> dict | None:
+    init_db()
+    query = """
+        SELECT run_time, strategy_name, top_n, rebalance_days, lookback_years,
+               latest_value, total_return, max_drawdown, positive_period_ratio,
+               rebalance_count, symbols_count, meta_json
+        FROM backtest_runs
+    """
+    params: tuple = ()
+    if strategy_name:
+        query += " WHERE strategy_name = ?"
+        params = (strategy_name,)
+    query += " ORDER BY run_id DESC LIMIT 1"
+
+    with _connect() as conn:
+        row = conn.execute(query, params).fetchone()
+
+    if not row:
+        return None
+
+    meta = {}
+    if row[11]:
+        try:
+            meta = json.loads(row[11])
+        except json.JSONDecodeError:
+            meta = {}
+
+    return {
+        "run_time": pd.Timestamp(row[0]),
+        "strategy_name": row[1],
+        "top_n": int(row[2]),
+        "rebalance_days": int(row[3]),
+        "lookback_years": int(row[4]),
+        "metrics": {
+            "latest_value": float(row[5]) if row[5] is not None else 1.0,
+            "total_return": float(row[6]) if row[6] is not None else 0.0,
+            "max_drawdown": float(row[7]) if row[7] is not None else 0.0,
+            "positive_period_ratio": float(row[8]) if row[8] is not None else 0.0,
+            "rebalance_count": int(row[9]) if row[9] is not None else 0,
+            "start_date": pd.NaT,
+            "end_date": pd.NaT,
+        },
+        "symbols_count": int(row[10]) if row[10] is not None else 0,
+        "meta": meta,
+    }

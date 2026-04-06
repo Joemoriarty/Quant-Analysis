@@ -68,8 +68,23 @@ def fetch_market_sentiment_snapshot() -> dict:
     return snapshot
 
 
-def load_or_fetch_market_sentiment_snapshot() -> dict | None:
+def _snapshot_is_recent(snapshot: dict | None, max_age_minutes: int) -> bool:
+    if not snapshot:
+        return False
+    snapshot_time = pd.to_datetime(snapshot.get("snapshot_time"), errors="coerce")
+    if pd.isna(snapshot_time):
+        return False
+    return snapshot_time >= pd.Timestamp.now() - pd.Timedelta(minutes=max_age_minutes)
+
+
+def load_or_fetch_market_sentiment_snapshot(
+    max_age_minutes: int = 15,
+    prefer_cache: bool = False,
+) -> dict | None:
+    cached = get_latest_market_sentiment_snapshot()
+    if cached and (prefer_cache or _snapshot_is_recent(cached, max_age_minutes)):
+        return cached
     try:
         return fetch_market_sentiment_snapshot()
     except DataFetchError:
-        return get_latest_market_sentiment_snapshot()
+        return cached

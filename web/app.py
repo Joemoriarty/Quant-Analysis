@@ -9,10 +9,12 @@ if str(PROJECT_ROOT) not in sys.path:
 import pandas as pd
 import streamlit as st
 
-from data.akshare_loader import DataFetchError, get_stock_catalog
+from data.akshare_loader import DataFetchError, get_cached_stock_catalog, get_stock_catalog
 from db.market_db import (
     get_best_strategy_config,
     get_db_status,
+    get_latest_backtest_run,
+    get_latest_strategy_recommendations,
     get_recent_automation_runs,
     get_setting,
     init_db,
@@ -75,6 +77,11 @@ def load_catalog(limit: int):
 
 
 @st.cache_data(show_spinner=False)
+def load_cached_catalog(limit: int):
+    return get_cached_stock_catalog(limit=limit)
+
+
+@st.cache_data(show_spinner=False)
 def load_accumulation_scan(scan_limit: int, top_k: int, config_json: str):
     return screen_accumulation_candidates(
         scan_limit=scan_limit,
@@ -97,6 +104,48 @@ def load_growth_candidates(scan_limit: int, top_k: int, target_return: float, co
 def load_db_status():
     init_db()
     return get_db_status()
+
+
+def bootstrap_cached_catalog(limit: int = 100) -> None:
+    if st.session_state.symbols:
+        return
+    catalog = load_cached_catalog(limit)
+    if catalog is None or catalog.empty:
+        return
+    st.session_state.catalog = catalog
+    st.session_state.symbols = catalog["code"].tolist()
+    st.session_state.symbol_names = dict(zip(catalog["code"], catalog["name"]))
+    st.session_state.symbols_error = None
+    st.session_state.catalog_bootstrapped = True
+
+
+def bootstrap_cached_result() -> None:
+    if st.session_state.last_result is not None:
+        return
+    latest_pick = get_latest_strategy_recommendations(strategy_name="unified_selection")
+    latest_backtest = get_latest_backtest_run(strategy_name="unified_selection")
+    if not latest_pick or not latest_backtest:
+        return
+    st.session_state.last_result = {
+        "current_pick": {
+            "as_of_date": latest_pick["as_of_date"],
+            "weights": {},
+            "table": latest_pick["table"],
+        },
+        "metrics": latest_backtest["metrics"],
+        "curve": pd.Series(dtype=float, name="portfolio_value"),
+        "holdings": pd.DataFrame(),
+        "weights": pd.DataFrame(),
+        "errors": {},
+        "diagnostics": pd.DataFrame(),
+        "rebalance_records": [],
+        "latest_prices": {},
+        "cache_stats": latest_backtest.get("meta", {}).get("cache_stats", {}),
+        "api_stats": latest_backtest.get("meta", {}).get("api_stats", {}),
+        "restored_from_cache": True,
+        "restored_run_time": latest_backtest["run_time"],
+    }
+    st.session_state.result_bootstrapped = True
 
 
 def render_data_error(message: str) -> None:
@@ -1863,6 +1912,13 @@ if "unified_scoring_config" not in st.session_state:
     st.session_state.unified_scoring_config = normalize_scoring_config(
         get_setting("unified_scoring_config", DEFAULT_SCORING_CONFIG)
     )
+if "catalog_bootstrapped" not in st.session_state:
+    st.session_state.catalog_bootstrapped = False
+if "result_bootstrapped" not in st.session_state:
+    st.session_state.result_bootstrapped = False
+
+bootstrap_cached_catalog()
+bootstrap_cached_result()
 
 render_usage_guide()
 current_scoring_config = normalize_scoring_config(st.session_state.unified_scoring_config)
@@ -1909,6 +1965,8 @@ with tab_strategy:
             pool_description = catalog.attrs.get("pool_description", f"股票池 Top {symbol_count}")
             source = catalog.attrs.get("source", "unknown")
             st.success(f"已加载 {symbol_count} 只股票。来源：{pool_description}。")
+            if st.session_state.catalog_bootstrapped:
+                st.caption("本次已从本地缓存自动恢复股票池，无需重新手动点击“加载股票池”。")
             if source == "cache_stale":
                 st.warning("当前股票池来自旧缓存，系统已尝试刷新但本次未成功。")
             elif source == "cache_fresh":
@@ -1981,6 +2039,10 @@ with tab_strategy:
 
     result = st.session_state.last_result
     if result:
+        if result.get("restored_from_cache"):
+            restored_time = pd.to_datetime(result.get("restored_run_time"), errors="coerce")
+            if pd.notna(restored_time):
+                st.caption(f"当前展示的是本地持久化恢复的上次结果，生成时间：{restored_time.strftime('%Y-%m-%d %H:%M:%S')}。如需最新结果，请重新运行策略。")
         render_current_pick(result)
         st.divider()
         render_paper_trading_panel(result)
@@ -1991,19 +2053,22 @@ with tab_strategy:
         curve = result["curve"]
         render_metrics(result["metrics"])
 
-        st.subheader("组合净值走势")
-        st.line_chart(curve)
-        st.dataframe(curve.rename("净值").to_frame(), use_container_width=True)
+        if curve.empty:
+            st.info("本次是从本地持久化恢复的结果，历史净值曲线、权重变化和调仓明细未单独持久化；重新运行策略后会显示完整回测过程。")
+        else:
+            st.subheader("组合净值走势")
+            st.line_chart(curve)
+            st.dataframe(curve.rename("净值").to_frame(), use_container_width=True)
 
-        left_col, right_col = st.columns(2)
-        with left_col:
-            st.subheader("策略权重变化")
-            render_weights(result["weights"])
-        with right_col:
-            st.subheader("历史调仓记录")
-            render_holdings(result)
+            left_col, right_col = st.columns(2)
+            with left_col:
+                st.subheader("策略权重变化")
+                render_weights(result["weights"])
+            with right_col:
+                st.subheader("历史调仓记录")
+                render_holdings(result)
 
-        render_debug_panel(result, symbol_names)
+            render_debug_panel(result, symbol_names)
     else:
         st.info("先加载股票池并运行策略，这里会展示当前推荐、回测结果和量化交易核验面板。")
 

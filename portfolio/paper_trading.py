@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pandas as pd
 
 from data.akshare_loader import DataFetchError, get_realtime_quotes, get_stock_data
+from storage_paths import PAPER_DIR, ensure_storage_dirs
 
-
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-PAPER_DIR = DATA_DIR / "paper_trading"
 SETTINGS_FILE = PAPER_DIR / "settings.json"
 LOG_FILE = PAPER_DIR / "paper_trade_log.csv"
 MARK_LOG_FILE = PAPER_DIR / "paper_mark_log.csv"
@@ -18,7 +15,7 @@ BOARD_LOT_SIZE = 100
 
 
 def _ensure_paper_dir() -> None:
-    PAPER_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_storage_dirs()
 
 
 def is_paper_trading_enabled() -> bool:
