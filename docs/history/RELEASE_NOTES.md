@@ -2,10 +2,24 @@
 
 这份文档只记录每次迭代的变更流水，不承担“当前能力状态审查”职责。
 
+文档入口：
+- 首次阅读或准备更新 `docs/` 时，请先看 [README.md](../README.md)。
+- 固定更新模板请看 [DOC_UPDATE_TEMPLATES.md](../templates/DOC_UPDATE_TEMPLATES.md)。
+- 字段含义不清楚时，请先查 [FIELD_GLOSSARY.md](../current/FIELD_GLOSSARY.md)。
+
 如果你要查看系统当前做到哪一步，请看：
-- [PROFESSIONALIZATION_TRACKER.md](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/docs/PROFESSIONALIZATION_TRACKER.md)
-- [STOCK_ANALYSIS_LOGIC.md](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/docs/STOCK_ANALYSIS_LOGIC.md)
-- [CODE_ARCHITECTURE.md](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/docs/CODE_ARCHITECTURE.md)
+- [PROFESSIONALIZATION_TRACKER.md](../current/PROFESSIONALIZATION_TRACKER.md)
+- [STOCK_ANALYSIS_LOGIC.md](../current/STOCK_ANALYSIS_LOGIC.md)
+- [CODE_ARCHITECTURE.md](../current/CODE_ARCHITECTURE.md)
+- [PRIVATE_FUND_GAP_BACKLOG.md](../current/PRIVATE_FUND_GAP_BACKLOG.md)
+
+## 文档分工
+
+- 本文件只写“发生了什么变更”。
+- 当前逻辑以 [STOCK_ANALYSIS_LOGIC.md](../current/STOCK_ANALYSIS_LOGIC.md) 为准。
+- 当前能力状态与机构成熟度以 [PROFESSIONALIZATION_TRACKER.md](../current/PROFESSIONALIZATION_TRACKER.md) 为准。
+- 当前私募视角缺陷以 [PRIVATE_FUND_GAP_BACKLOG.md](../current/PRIVATE_FUND_GAP_BACKLOG.md) 为准。
+- 当前模块职责和数据流以 [CODE_ARCHITECTURE.md](../current/CODE_ARCHITECTURE.md) 为准。
 
 ## 记录模板
 
@@ -23,6 +37,54 @@
 
 ## 历史记录
 
+### 2026-04-07 - 修补记录
+
+- 本次目标：先修补“主力吸筹”口径过满的问题，把页面和说明统一收敛到“量价代理信号”
+- 本次新增：
+  - 单股页“量价吸筹评分”改为“量价代理评分”
+  - 单股页新增说明，明确 `accumulation_score` 只是量价共振代理分
+  - 候选页主入口文案改为“量价代理候选”
+  - 单股分析里的 `accumulation_conclusion` 调整为更保守的代理口径
+  - 字段词典、逻辑文档、私募缺陷 backlog、专业化 tracker 已同步更新
+- 本次影响的模块：
+  - 单股分析
+  - 候选筛选页
+  - 分析方案页
+  - 文档体系
+- 当前已统一的模块：
+  - 单股分析、自选股分析、量价代理候选、中线候选、组合选股、策略进化继续共用统一评分口径
+- 当前仍未增加的能力：
+  - 真实主力席位识别
+  - 大单资金流与北向资金联动
+  - 龙虎榜、融资融券、筹码分布等资金行为补充模块
+- 是否影响最终股票判断逻辑：`否`
+- 如果影响：
+  - 不适用，本次主要修补用户可见口径和解释文案，不改分数计算公式
+- 风险或遗留问题：
+  - 当前内部字段名 `accumulation_score` 仍保留历史命名，后续如果继续对外暴露需要持续配中文解释
+  - 候选结果表和分析方案页仍有少量历史“吸筹”措辞，建议下一轮继续统一
+
+### 2026-04-07 - 修补记录
+
+- 本次目标：给 `docs/` 文档体系增加网页端入口，方便直接查看“改了什么、往哪改、还有哪些问题”
+- 本次新增：
+  - 网页端新增“Docs 看板”页签
+  - Docs 看板新增“概览 / 最近改动 / 专业化方向 / 问题清单 / 文档原文”五个区块
+  - 页面会自动读取 `docs/README.md`、`PROFESSIONALIZATION_TRACKER.md`、`PRIVATE_FUND_GAP_BACKLOG.md`、`RELEASE_NOTES.md`
+  - `docs/README.md` 和 `CODE_ARCHITECTURE.md` 已同步记录该入口
+- 本次影响的模块：
+  - 页面展示层
+  - 文档入口体系
+- 当前已统一的模块：
+  - 网页端和 `docs/` 目录现在都可以作为文档体系入口
+- 当前仍未增加的能力：
+  - Docs 看板还没有按字段级别做交叉跳转
+  - 还没有单独的“本轮新增 / 本轮修复 / 本轮遗留”卡片式展示
+- 是否影响最终股票判断逻辑：`否`
+- 如果影响：
+  - 不适用，本次只新增文档入口和摘要展示
+- 风险或遗留问题：
+  - Docs 看板当前基于 markdown 结构做轻量解析，后续如果文档标题结构大改，需要同步调整解析逻辑
 ### 2026-04-04 - 修补记录
 
 - 本次目标：把事件驱动分析正式接入统一评分主链，并补齐页面展示

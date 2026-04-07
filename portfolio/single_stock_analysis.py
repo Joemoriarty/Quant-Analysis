@@ -747,11 +747,11 @@ def _analyze_accumulation(metrics: dict, latest: pd.Series) -> tuple[str, list[s
         signals.append("股价脱离近期支撑区，说明下方承接相对稳定")
 
     if score >= 75:
-        conclusion = "存在一定量价共振吸筹迹象"
+        conclusion = "存在一定量价共振吸筹迹象，但这仍属于量价代理信号"
     elif score >= 50:
-        conclusion = "有部分资金吸筹信号，但还不算特别强"
+        conclusion = "出现部分量价共振信号，但还不足以视为很强的吸筹代理"
     else:
-        conclusion = "暂未看到很明显的量价吸筹迹象"
+        conclusion = "暂未看到很明显的量价共振吸筹代理迹象"
 
     return conclusion, signals, score
 
@@ -1038,7 +1038,7 @@ def _screen_one_accumulation_candidate(row: pd.Series) -> dict | None:
         "symbol": symbol,
         "name": name,
         "display_name": f"{symbol} {name}",
-        "量价吸筹评分": accumulation_score,
+        "量价代理评分": accumulation_score,
         "趋势评分": trend_score,
         "20日动量": metrics["return_20d"],
         "量比": metrics["volume_ratio_10d"],
@@ -1063,11 +1063,11 @@ def screen_accumulation_candidates(scan_limit: int = 500, top_k: int = 20) -> pd
 
     if not results:
         return pd.DataFrame(
-            columns=["display_name", "量价吸筹评分", "趋势评分", "20日动量", "量比", "RSI", "MACD柱", "结论", "信号摘要"]
+            columns=["display_name", "量价代理评分", "趋势评分", "20日动量", "量比", "RSI", "MACD柱", "结论", "信号摘要"]
         )
 
     result_df = pd.DataFrame(results).sort_values(
-        by=["量价吸筹评分", "趋势评分", "20日动量", "量比"],
+        by=["量价代理评分", "趋势评分", "20日动量", "量比"],
         ascending=False,
     )
     return result_df.head(top_k).reset_index(drop=True)
@@ -1085,7 +1085,7 @@ def recommend_growth_candidates(scan_limit: int = 300, top_k: int = 10, target_r
             if not item:
                 continue
             potential_score = (
-                item["量价吸筹评分"] * 0.45
+                item["量价代理评分"] * 0.45
                 + item["趋势评分"] * 0.35
                 + min(item["20日动量"] * 100, 25) * 0.20
             )
@@ -1093,14 +1093,14 @@ def recommend_growth_candidates(scan_limit: int = 300, top_k: int = 10, target_r
                 continue
             item["一年30%目标"] = f"{target_return:.0%}"
             item["潜力评分"] = round(potential_score, 2)
-            item["推荐理由"] = "量价吸筹评分较高、趋势评分较高，且近期量能与动量配合较好。"
+            item["推荐理由"] = "量价代理评分较高、趋势评分较高，且近期量能与动量配合较好。"
             results.append(item)
 
     if not results:
-        return pd.DataFrame(columns=["display_name", "潜力评分", "一年30%目标", "量价吸筹评分", "趋势评分", "推荐理由"])
+        return pd.DataFrame(columns=["display_name", "潜力评分", "一年30%目标", "量价代理评分", "趋势评分", "推荐理由"])
 
     result_df = pd.DataFrame(results).sort_values(
-        by=["潜力评分", "量价吸筹评分", "趋势评分"],
+        by=["潜力评分", "量价代理评分", "趋势评分"],
         ascending=False,
     )
     return result_df.head(top_k).reset_index(drop=True)

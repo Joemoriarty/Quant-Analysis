@@ -2,10 +2,40 @@
 
 这份文档用于记录当前股票分析系统的代码架构。
 
+文档入口：
+- 首次阅读或准备更新 `docs/` 时，请先看 [README.md](../README.md)。
+- 固定更新模板请看 [DOC_UPDATE_TEMPLATES.md](../templates/DOC_UPDATE_TEMPLATES.md)。
+- 字段含义不清楚时，请先查 [FIELD_GLOSSARY.md](./FIELD_GLOSSARY.md)。
+
 规则：
 - 只要代码生成或重构影响了模块职责、数据流、插件结构、页面入口、存储结构，就必须同步更新本文件。
-- 如果本次改动还影响股票判断逻辑，必须同步更新 [STOCK_ANALYSIS_LOGIC.md](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/docs/STOCK_ANALYSIS_LOGIC.md)。
-- 如果本次改动还影响专业化能力覆盖范围，必须同步更新 [PROFESSIONALIZATION_TRACKER.md](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/docs/PROFESSIONALIZATION_TRACKER.md)。
+- 如果本次改动还影响股票判断逻辑，必须同步更新 [STOCK_ANALYSIS_LOGIC.md](./STOCK_ANALYSIS_LOGIC.md)。
+- 如果本次改动还影响专业化能力覆盖范围，必须同步更新 [PROFESSIONALIZATION_TRACKER.md](./PROFESSIONALIZATION_TRACKER.md)。
+
+## 文档分工
+
+- 本文件只负责回答“系统现在是怎么组织起来的”。
+- 股票最终判断口径写在 [STOCK_ANALYSIS_LOGIC.md](./STOCK_ANALYSIS_LOGIC.md)。
+- 能力建设状态与机构成熟度写在 [PROFESSIONALIZATION_TRACKER.md](./PROFESSIONALIZATION_TRACKER.md)。
+- 私募视角的产品缺陷和 backlog 写在 [PRIVATE_FUND_GAP_BACKLOG.md](./PRIVATE_FUND_GAP_BACKLOG.md)。
+- 历史迭代流水写在 [RELEASE_NOTES.md](../history/RELEASE_NOTES.md)。
+
+## 统一分析层输出字段中文说明
+
+- 技术面结论（`technical_recommendation`）：
+  - 只代表技术走势层面的判断
+- 基本面评分（`fundamental_score`）：
+  - 财务与估值质量的综合分数
+- 市场情绪状态（`market_sentiment_state`）：
+  - 当前市场环境的强弱状态
+- 事件驱动评分（`event_score`）：
+  - 近期事件面对个股的综合影响分数
+- 行业横向比较评分（`industry_comparison_score`）：
+  - 个股在同行业内的相对位置评分
+- 最终推荐结论（`recommendation`）：
+  - 所有主链信息汇总后的最终推荐级别
+- 最终结论依据（`final_decision_basis`）：
+  - 对最终推荐结论的简要归因说明
 
 ## 当前架构
 
@@ -15,10 +45,10 @@
   - 抓取行情、基本面、情绪、辅助对比数据
   - 提供带回退逻辑的 `load_or_fetch` 接口
 - 主要文件：
-  - [akshare_loader.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/data/akshare_loader.py)
-  - [fundamental_loader.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/data/fundamental_loader.py)
-  - [events_loader.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/data/events_loader.py)
-  - [sentiment_loader.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/data/sentiment_loader.py)
+  - [akshare_loader.py](../data/akshare_loader.py)
+  - [fundamental_loader.py](../data/fundamental_loader.py)
+  - [events_loader.py](../data/events_loader.py)
+  - [sentiment_loader.py](../data/sentiment_loader.py)
 - 当前状态：
   - 行情数据链路最完整
   - 基本面数据已进入统一分析主链
@@ -31,7 +61,7 @@
 - 作用：
   - 存储市场快照、价格历史、推荐结果、回测结果、优化结果、配置和自动任务记录
 - 主要文件：
-  - [market_db.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/db/market_db.py)
+  - [market_db.py](../db/market_db.py)
 - 当前表结构：
   - 行情和价格历史
   - 推荐记录和回测记录
@@ -50,15 +80,15 @@
   - 输出股票分析的唯一标准结果
   - 当前是所有股票判断的单一事实来源
 - 主要文件：
-  - [single_stock_analysis.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/single_stock_analysis.py)
+  - [single_stock_analysis.py](../portfolio/single_stock_analysis.py)
 - 当前输出：
-  - `technical_recommendation`
-  - `fundamental_score`
-  - `market_sentiment_state`
-  - `event_score`
-  - `industry_comparison_score`
-  - `recommendation`
-  - `final_decision_basis`
+  - 技术面结论（`technical_recommendation`）
+  - 基本面评分（`fundamental_score`）
+  - 市场情绪状态（`market_sentiment_state`）
+  - 事件驱动评分（`event_score`）
+  - 行业横向比较评分（`industry_comparison_score`）
+  - 最终推荐结论（`recommendation`）
+  - 最终结论依据（`final_decision_basis`）
   - `comparison_results`
 
 ### 4. 对比插件层
@@ -66,7 +96,7 @@
 - 作用：
   - 在不改主判断链的前提下，扩展横向对比类型
 - 主要文件：
-  - [comparison_plugins.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/comparison_plugins.py)
+  - [comparison_plugins.py](../portfolio/comparison_plugins.py)
 - 当前机制：
   - 通过注册表注册新的对比类型
   - 插件读取统一分析上下文
@@ -82,11 +112,11 @@
 - 作用：
   - 为所有在用策略入口提供一套统一评分配置
 - 主要文件：
-  - [scoring_config.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/scoring_config.py)
+  - [scoring_config.py](../portfolio/scoring_config.py)
 - 当前被这些模块共用：
   - 单股最终推荐
   - 单股相关筛选视图
-  - 吸筹候选
+  - 量价代理候选
   - 中线候选
   - 组合选股
   - 策略优化
@@ -104,9 +134,9 @@
 - 作用：
   - 复用统一分析结果，生成候选和组合
 - 主要文件：
-  - [candidate_screener.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/candidate_screener.py)
-  - [unified_selection.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/strategies/unified_selection.py)
-  - [strategy_optimizer.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/strategy_optimizer.py)
+  - [candidate_screener.py](../portfolio/candidate_screener.py)
+  - [unified_selection.py](../strategies/unified_selection.py)
+  - [strategy_optimizer.py](../portfolio/strategy_optimizer.py)
 - 当前规则：
   - 所有在用策略入口都应围绕统一评分配置工作
 
@@ -117,16 +147,27 @@
   - 模拟交易
   - 自动化任务
 - 主要文件：
-  - [watchlist.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/watchlist.py)
-  - [paper_trading.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/paper_trading.py)
-  - [automation_workflows.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/automation_workflows.py)
+  - [watchlist.py](../portfolio/watchlist.py)
+  - [paper_trading.py](../portfolio/paper_trading.py)
+  - [automation_workflows.py](../portfolio/automation_workflows.py)
 
 ### 8. 页面层
 
 - 作用：
   - 展示分析、筛选、自选股、优化、解释和调试视图
 - 主要文件：
-  - [app.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/web/app.py)
+  - [app.py](../web/app.py)
+- 当前页面入口：
+  - 策略总览
+  - 单股分析
+  - 量价代理候选
+  - 中线候选
+  - 分析方案
+  - 策略进化
+  - Docs 看板
+- Docs 看板作用：
+  - 聚合展示 `docs/` 中的最近改动、专业化方向、问题清单和文档原文
+  - 作为网页端查看文档体系的总入口
 - 当前问题：
   - 文件仍然过大
   - 页面逻辑和业务逻辑耦合偏重
@@ -219,10 +260,10 @@
 - 新增模块：
   - 无新增独立模块
 - 修改模块：
-  - [market_db.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/db/market_db.py)
-  - [fundamental_loader.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/data/fundamental_loader.py)
-  - [single_stock_analysis.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/single_stock_analysis.py)
-  - [comparison_plugins.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/comparison_plugins.py)
+  - [market_db.py](../db/market_db.py)
+  - [fundamental_loader.py](../data/fundamental_loader.py)
+  - [single_stock_analysis.py](../portfolio/single_stock_analysis.py)
+  - [comparison_plugins.py](../portfolio/comparison_plugins.py)
 - 数据流变化：
   - 行业归属获取顺序改为：
     1. `industry_membership`
@@ -247,8 +288,8 @@
 - 新增模块：
   - 无新增独立文件，扩展现有自动化工作流
 - 修改模块：
-  - [automation_workflows.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/automation_workflows.py)
-  - [app.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/web/app.py)
+  - [automation_workflows.py](../portfolio/automation_workflows.py)
+  - [app.py](../web/app.py)
 - 数据流变化：
   - 自动化任务现在新增 `industry-membership-refresh`
   - 任务执行顺序为：
@@ -274,9 +315,9 @@
 - 新增模块：
   - 无新增独立文件
 - 修改模块：
-  - [fundamental_loader.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/data/fundamental_loader.py)
-  - [automation_workflows.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/automation_workflows.py)
-  - [app.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/web/app.py)
+  - [fundamental_loader.py](../data/fundamental_loader.py)
+  - [automation_workflows.py](../portfolio/automation_workflows.py)
+  - [app.py](../web/app.py)
 - 数据流变化：
   - 行业归属解析顺序更新为：
     1. `industry_membership`
@@ -299,10 +340,10 @@
 - 新增模块：
   - 无新增独立文件
 - 修改模块：
-  - [market_db.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/db/market_db.py)
-  - [fundamental_loader.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/data/fundamental_loader.py)
-  - [comparison_plugins.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/comparison_plugins.py)
-  - [app.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/web/app.py)
+  - [market_db.py](../db/market_db.py)
+  - [fundamental_loader.py](../data/fundamental_loader.py)
+  - [comparison_plugins.py](../portfolio/comparison_plugins.py)
+  - [app.py](../web/app.py)
 - 数据流变化：
   - 行业横向比较现在优先读取本地 `industry_membership + fundamental_snapshots + valuation_snapshots` 联合结果
   - 当本地同行样本缺少可用财务快照时，会按需补抓同行基础快照
@@ -320,12 +361,12 @@
 - 本次目标：
   - 把行业横向比较从解释层正式接进统一评分主链
 - 修改模块：
-  - [scoring_config.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/scoring_config.py)
-  - [single_stock_analysis.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/single_stock_analysis.py)
-  - [candidate_screener.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/candidate_screener.py)
-  - [unified_selection.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/strategies/unified_selection.py)
-  - [strategy_optimizer.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/portfolio/strategy_optimizer.py)
-  - [app.py](/C:/Users/18197/Documents/project/股票/quant_system_pro/quant_system_pro/web/app.py)
+  - [scoring_config.py](../portfolio/scoring_config.py)
+  - [single_stock_analysis.py](../portfolio/single_stock_analysis.py)
+  - [candidate_screener.py](../portfolio/candidate_screener.py)
+  - [unified_selection.py](../strategies/unified_selection.py)
+  - [strategy_optimizer.py](../portfolio/strategy_optimizer.py)
+  - [app.py](../web/app.py)
 - 数据流变化：
   - 单股分析在生成 `comparison_results` 后，会提取 `industry_comparison_score`
   - `industry_comparison_score` 进入最终推荐升降档逻辑

@@ -2,6 +2,36 @@
 
 这份文档用于记录系统当前如何分析股票。以后只要修改会影响 `recommendation` 的规则，就必须同步更新这里。
 
+文档入口：
+- 首次阅读或准备更新 `docs/` 时，请先看 [README.md](../README.md)。
+- 固定更新模板请看 [DOC_UPDATE_TEMPLATES.md](../templates/DOC_UPDATE_TEMPLATES.md)。
+- 字段含义不清楚时，请先查 [FIELD_GLOSSARY.md](./FIELD_GLOSSARY.md)。
+
+## 文档分工
+
+- 本文件只回答一件事：当前系统到底如何得出股票结论。
+- 如果你想看模块职责、数据流和页面入口，请看 [CODE_ARCHITECTURE.md](./CODE_ARCHITECTURE.md)。
+- 如果你想看能力覆盖状态和机构成熟度，请看 [PROFESSIONALIZATION_TRACKER.md](./PROFESSIONALIZATION_TRACKER.md)。
+- 如果你想看私募视角下的主要缺陷和产品化 gap，请看 [PRIVATE_FUND_GAP_BACKLOG.md](./PRIVATE_FUND_GAP_BACKLOG.md)。
+- 如果你想看历史迭代流水，请看 [RELEASE_NOTES.md](../history/RELEASE_NOTES.md)。
+
+## 核心输出字段中文说明
+
+- 技术面结论（`technical_recommendation`）：
+  - 只从技术走势角度给出的结论，不包含基本面、情绪和事件面的最终校正
+- 基本面评分（`fundamental_score`）：
+  - 用财务质量、估值、增长等信息得到的综合分数
+- 市场情绪状态（`market_sentiment_state`）：
+  - 当前市场环境是偏强、偏弱还是中性
+- 事件驱动评分（`event_score`）：
+  - 近期公告、业绩预告、财报预约等事件的综合影响分数
+- 行业横向比较评分（`industry_comparison_score`）：
+  - 该股票放到同行业里横向比较后得到的相对位置分数
+- 最终推荐结论（`recommendation`）：
+  - 汇总技术面、基本面、市场情绪、事件驱动、行业横向比较后给出的最终结论
+- 最终结论依据（`final_decision_basis`）：
+  - 对“为什么得到这个最终结论”的一句话总结
+
 ## 版本历史
 
 ### v0.1.0
@@ -23,7 +53,7 @@
 - 补齐缺失值容错，`NaN` 不再直接参与整数转换；自选股仓位字段和市场情绪快照缺失时按安全默认值处理。
 
 ### v0.4.0
-- 主力建仓候选和中线候选改为复用单股最终判断链路，不再单独使用旧的纯技术面启发式排序。
+- 量价代理候选和中线候选改为复用单股最终判断链路，不再单独使用旧的纯技术面启发式排序。
 - 新增“分析方案”页面，用于展示当前筛选方案和价值判断规则。
 
 ### v0.4.1
@@ -32,7 +62,7 @@
 
 ### v0.5.0
 - 统一评分参数改为页面可调。
-- 组合选股、主力建仓候选、中线候选、策略进化改为共用同一份评分配置。
+- 组合选股、量价代理候选、中线候选、策略进化改为共用同一份评分配置。
 
 ### v0.6.0
 - 行业横向比较进入统一评分口径。
@@ -51,9 +81,13 @@
 - `event_score` 进入单股最终推荐、候选筛选、组合选股和策略进化。
 - 单股页和分析方案页新增事件驱动摘要与事件权重展示。
 
+### v0.8.1
+- 页面端把“主力吸筹 / 吸筹候选”统一调整为“量价代理信号 / 量价代理候选”的口径。
+- `accumulation_score` 明确解释为量价共振代理分，不再暗示系统已经完成真实主力席位识别。
+
 ## 当前版本
 
-### v0.8.0
+### v0.8.1
 
 状态：当前线上逻辑
 
@@ -69,13 +103,13 @@
 
 最终页面上应能看到这些核心输出：
 
-1. `technical_recommendation`
-2. `fundamental_score`
-3. `market_sentiment_state`
-4. `event_score`
-5. `industry_comparison_score`
-6. `recommendation`
-7. `final_decision_basis`
+1. 技术面结论（`technical_recommendation`）
+2. 基本面评分（`fundamental_score`）
+3. 市场情绪状态（`market_sentiment_state`）
+4. 事件驱动评分（`event_score`）
+5. 行业横向比较评分（`industry_comparison_score`）
+6. 最终推荐结论（`recommendation`）
+7. 最终结论依据（`final_decision_basis`）
 
 ## 当前候选筛选规则
 
@@ -83,19 +117,19 @@
 
 1. 单股分析
 2. 自选股分析
-3. 主力建仓候选
+3. 量价代理候选
 4. 中线候选
 5. 组合选股
 6. 策略进化
 
 统一方式是：
 
-1. 先跑单股分析，得到 `recommendation`
+1. 先跑单股分析，得到最终推荐结论（`recommendation`）
 2. 再读取 `trend_score`
-3. 再读取 `fundamental_score`
-4. 再读取 `market_sentiment_state`
-5. 再读取 `event_score`
-6. 再读取 `industry_comparison_score`
+3. 再读取基本面评分（`fundamental_score`）
+4. 再读取市场情绪状态（`market_sentiment_state`）
+5. 再读取事件驱动评分（`event_score`）
+6. 再读取行业横向比较评分（`industry_comparison_score`）
 7. 再读取 `accumulation_score`
 
 也就是说，候选池不再额外维护一套和单股页不同的判断口径。
@@ -115,7 +149,7 @@
 技术面会先生成：
 
 1. `trend_score`
-2. `technical_recommendation`
+2. 技术面结论（`technical_recommendation`）
 3. `sell_guidance`
 4. `sell_plan`
 5. `add_position_guidance`
@@ -137,7 +171,7 @@
 
 基本面会生成：
 
-1. `fundamental_score`
+1. 基本面评分（`fundamental_score`）
 2. `fundamental_explanations`
 3. `fundamental_risks`
 4. `fundamental_summary`
@@ -154,7 +188,7 @@
 4. `跌停家数`
 5. `市场广度`
 6. `market_sentiment_score`
-7. `market_sentiment_state`
+7. 市场情绪状态（`market_sentiment_state`）
 
 市场情绪会生成：
 
@@ -188,18 +222,23 @@
 
 ## 当前候选池如何排序
 
-### 主力建仓候选
+### 量价代理候选
+
+说明：
+
+1. 这一模块现在只筛选“量价共振偏强”的候选，不等同于真实主力建仓识别。
+2. `accumulation_score` 仍然保留内部字段名，但对外统一解释为量价代理评分。
 
 筛选条件：
 
 1. 单股最终结论不能是 `暂不推荐`
-2. `量价吸筹评分` 需要达到候选阈值
+2. `量价代理评分` 需要达到候选阈值
 
 排序依据：
 
 1. 最终结论优先级
 2. 综合评分
-3. 量价吸筹评分
+3. 量价代理评分
 4. 趋势评分
 
 ### 中线候选
@@ -213,7 +252,7 @@
 
 1. 趋势评分
 2. 基本面评分
-3. 量价吸筹评分
+3. 量价代理评分
 4. 市场情绪得分
 5. 20日动量
 
@@ -223,7 +262,7 @@
 
 当前组合综合分公式：
 
-`组合综合分 = 趋势评分*0.35 + 基本面评分*0.30 + 量价吸筹评分*0.20 + 市场情绪得分*0.15 + 结论加减项`
+`组合综合分 = 趋势评分*0.35 + 基本面评分*0.30 + 量价代理评分*0.20 + 市场情绪得分*0.15 + 结论加减项`
 
 其中结论加减项为：
 
@@ -237,7 +276,7 @@
 2. 最低趋势评分：`55`
 3. 最低基本面评分：`45`
 
-也就是说，组合入口、单股分析、自选股分析、主力建仓候选和中线候选，现在都建立在同一套判断口径之上。
+也就是说，组合入口、单股分析、自选股分析、量价代理候选和中线候选，现在都建立在同一套判断口径之上。
 
 ## 当前动态调参机制
 
@@ -245,19 +284,19 @@
 
 1. 趋势权重
 2. 基本面权重
-3. 量价吸筹权重
+3. 量价代理权重
 4. 市场情绪权重
 5. 最低推荐级别
 6. 最低趋势评分
 7. 最低基本面评分
-8. 主力建仓候选最低吸筹评分
+8. 量价代理候选最低量价代理评分
 9. 中线候选最低潜力评分
 10. 不同最终结论的加减分
 
 这些参数当前会同时作用于：
 
 1. 组合选股入口
-2. 主力建仓候选
+2. 量价代理候选
 3. 中线候选
 4. 分析方案页展示公式
 5. 策略进化中的统一评分优化入口
@@ -506,7 +545,7 @@
   - `industry_score <= 30` 时，如果原结论是“推荐关注”且并非极强趋势+极强基本面，会下调为“中性观察”
   - `industry_score <= 30` 时，如果原结论是“中性观察”且基本面仍偏弱，会下调为“暂不推荐”
 - 行业横向分当前如何影响候选池和组合：
-  - 吸筹候选总分纳入 `industry_score`
+  - 量价代理候选总分纳入 `industry_score`
   - 中线候选潜力分纳入 `industry_score`
   - 组合选股总分纳入 `industry_score`
   - 统一阈值新增 `min_industry_score`

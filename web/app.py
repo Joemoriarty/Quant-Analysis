@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -70,6 +71,50 @@ st.set_page_config(page_title="统一评分选股系统", layout="wide")
 st.title("统一评分选股系统（A股）")
 st.caption("默认加载近期强势股票池，并优先使用本地缓存；在线历史行情会优先走东方财富，失败后再尝试腾讯证券。")
 
+DOCS_ROOT = PROJECT_ROOT / "docs"
+DOC_LIBRARY = [
+    {
+        "label": "Docs 索引",
+        "path": DOCS_ROOT / "README.md",
+        "role": "先看这份，帮助快速找到要读的文档和更新规则。",
+    },
+    {
+        "label": "字段中文词典",
+        "path": DOCS_ROOT / "current" / "FIELD_GLOSSARY.md",
+        "role": "查内部字段中文解释和统一写法。",
+    },
+    {
+        "label": "股票分析逻辑",
+        "path": DOCS_ROOT / "current" / "STOCK_ANALYSIS_LOGIC.md",
+        "role": "看系统现在怎么得出结论和评分。",
+    },
+    {
+        "label": "代码架构说明",
+        "path": DOCS_ROOT / "current" / "CODE_ARCHITECTURE.md",
+        "role": "看模块职责、数据流和页面入口。",
+    },
+    {
+        "label": "专业化修补追踪表",
+        "path": DOCS_ROOT / "current" / "PROFESSIONALIZATION_TRACKER.md",
+        "role": "看能力建设做到哪一步、下一步优先级是什么。",
+    },
+    {
+        "label": "私募视角缺陷清单",
+        "path": DOCS_ROOT / "current" / "PRIVATE_FUND_GAP_BACKLOG.md",
+        "role": "看从机构视角当前还有哪些关键问题。",
+    },
+    {
+        "label": "发布与修补记录",
+        "path": DOCS_ROOT / "history" / "RELEASE_NOTES.md",
+        "role": "看最近几次具体改了什么。",
+    },
+    {
+        "label": "文档更新模板",
+        "path": DOCS_ROOT / "templates" / "DOC_UPDATE_TEMPLATES.md",
+        "role": "看以后应该怎么补文档。",
+    },
+]
+
 
 @st.cache_data(show_spinner=False)
 def load_catalog(limit: int):
@@ -104,6 +149,118 @@ def load_growth_candidates(scan_limit: int, top_k: int, target_return: float, co
 def load_db_status():
     init_db()
     return get_db_status()
+
+
+@st.cache_data(show_spinner=False)
+def read_doc_text(path_str: str) -> str:
+    path = Path(path_str)
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+def extract_markdown_section(text: str, heading: str) -> str:
+    lines = text.splitlines()
+    section_lines: list[str] = []
+    collecting = False
+    heading_level = 0
+    for line in lines:
+        stripped = line.strip()
+        if stripped == heading:
+            collecting = True
+            heading_level = len(stripped) - len(stripped.lstrip("#"))
+            continue
+        if collecting and stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            if level <= heading_level:
+                break
+        if collecting:
+            section_lines.append(line)
+    return "\n".join(section_lines).strip()
+
+
+def extract_nested_bullets(section: str, field_name: str, limit: int = 5) -> list[str]:
+    lines = section.splitlines()
+    values: list[str] = []
+    collecting = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"- {field_name}："):
+            collecting = True
+            continue
+        if collecting:
+            if stripped.startswith("- ") and not line.startswith("  - "):
+                break
+            if line.startswith("  - "):
+                values.append(line.strip()[2:].strip())
+                if len(values) >= limit:
+                    break
+    return values
+
+
+def parse_release_note_summaries(text: str, limit: int = 3) -> list[dict[str, object]]:
+    pattern = re.compile(r"^### (\d{4}-\d{2}-\d{2}) - 修补记录$", re.MULTILINE)
+    matches = list(pattern.finditer(text))
+    summaries: list[dict[str, object]] = []
+    for index, match in enumerate(matches[:limit]):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section = text[start:end]
+        goal_match = re.search(r"- 本次目标：(.*)", section)
+        goal = goal_match.group(1).strip() if goal_match else ""
+        additions = extract_nested_bullets(section, "本次新增", limit=4)
+        risks = extract_nested_bullets(section, "风险或遗留问题", limit=3)
+        summaries.append(
+            {
+                "日期": match.group(1),
+                "本次目标": goal or "-",
+                "本次新增": additions,
+                "风险或遗留问题": risks,
+            }
+        )
+    return summaries
+
+
+def parse_tracker_progress(text: str) -> pd.DataFrame:
+    section = extract_markdown_section(text, "### 当前进展总览")
+    rows: list[dict[str, str]] = []
+    for line in section.splitlines():
+        match = re.match(r"^\d+\.\s+([^：]+)：系统接入状态\s+`([^`]+)`\s+\|\s+机构成熟度\s+`([^`]+)`", line.strip())
+        if match:
+            rows.append(
+                {
+                    "能力项": match.group(1).strip(),
+                    "系统接入状态": match.group(2).strip(),
+                    "机构成熟度": match.group(3).strip(),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def parse_backlog_items(text: str, limit: int = 8) -> pd.DataFrame:
+    lines = text.splitlines()
+    rows: list[dict[str, str]] = []
+    current_title = ""
+    current_status = ""
+    current_impact = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("### P"):
+            if current_title:
+                rows.append({"缺陷项": current_title, "当前状态": current_status or "-", "当前影响": current_impact or "-"})
+                if len(rows) >= limit:
+                    break
+            current_title = stripped.removeprefix("### ").strip()
+            current_status = ""
+            current_impact = ""
+            continue
+        if current_title and stripped.startswith("- 当前状态："):
+            current_status = stripped.split("：", 1)[1].replace("`", "").strip()
+        if current_title and stripped.startswith("- 当前影响："):
+            current_impact = stripped.split("：", 1)[1].strip()
+    if current_title and len(rows) < limit:
+        rows.append({"缺陷项": current_title, "当前状态": current_status or "-", "当前影响": current_impact or "-"})
+    return pd.DataFrame(rows)
 
 
 def bootstrap_cached_catalog(limit: int = 100) -> None:
@@ -173,8 +330,9 @@ def render_usage_guide() -> None:
                 {"步骤": "1. 加载股票池", "说明": "先点“加载股票池”，系统会加载当前强势活跃股票，作为回测和推荐候选池。"},
                 {"步骤": "2. 运行策略", "说明": "设置持仓数、调仓周期、回测年数后点“运行策略”，查看当前建议和历史回测。"},
                 {"步骤": "3. 单只股票分析", "说明": "输入代码或名称后分析单只股票，查看趋势评分、推荐理由、K线和分批卖出计划。"},
-                {"步骤": "4. 候选筛选", "说明": "设置扫描范围后筛选更大范围的吸筹候选股票，这个结果会和单股分析同时保留。"},
+                {"步骤": "4. 候选筛选", "说明": "设置扫描范围后筛选更大范围的量价代理候选股票，这个结果会和单股分析同时保留。"},
                 {"步骤": "5. 策略进化", "说明": "在“策略进化与数据库”里同步数据、执行优化、查看自动任务健康和当前最优参数。"},
+                {"步骤": "6. Docs 看板", "说明": "想看最近改了什么、接下来往哪改、当前还有哪些问题时，直接进入 Docs 看板。"},
             ]
         )
         st.dataframe(guide_df, use_container_width=True)
@@ -625,7 +783,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
     extra_cols[1].metric("MACD DIF", f"{metrics['dif']:.3f}")
     extra_cols[2].metric("MACD DEA", f"{metrics['dea']:.3f}")
     extra_cols[3].metric("MACD柱", f"{metrics['macd_hist']:.3f}")
-    extra_cols[4].metric("量价吸筹评分", f"{analysis['accumulation_score']}/100")
+    extra_cols[4].metric("量价代理评分", f"{analysis['accumulation_score']}/100")
 
     st.caption(
         f"分析日期：{metrics['analysis_date'].date()} | 20日均线 {metrics['ma20']:.2f} | "
@@ -633,6 +791,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
         f"近20日低点 {metrics['recent_low_20d']:.2f} | 支撑位 {metrics['support']:.2f} | "
         f"压力位 {metrics['resistance']:.2f}"
     )
+    st.caption("量价代理评分只反映量比、均线结构、MACD 和支撑位等量价共振信号，不等于真实主力资金行为识别。")
 
     final_cols = st.columns(5)
     final_cols[0].metric("技术结论", str(analysis.get("technical_recommendation", analysis["recommendation"])))
@@ -747,14 +906,14 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
         st.info(event_summary.get("headline", "当前没有可用的事件驱动数据"))
 
     comparison_results = analysis.get("comparison_results", [])
-    st.write("??????")
+    st.write("横向比较明细")
     if comparison_results:
         for result in comparison_results:
             if result.get("available"):
-                with st.expander(str(result.get("title", "??????")), expanded=False):
+                with st.expander(str(result.get("title", "横向比较")), expanded=False):
                     st.caption(str(result.get("headline", "")))
                     if result.get("score") is not None:
-                        st.write(f"- ????????{result['score']}/100")
+                        st.write(f"- 当前评分：{result['score']}/100")
                     items_df = pd.DataFrame(result.get("items", []))
                     if not items_df.empty:
                         st.dataframe(items_df.astype(str), use_container_width=True, hide_index=True)
@@ -767,9 +926,9 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
                     for item in result.get("risk_flags", []):
                         st.write(f"- {item}")
             else:
-                st.info(str(result.get("headline", "???????????????")))
+                st.info(str(result.get("headline", "当前没有可用的横向比较结果")))
     else:
-        st.info("????????????????")
+        st.info("当前没有可展示的横向比较明细")
 
     left_col, right_col = st.columns(2)
     with left_col:
@@ -808,7 +967,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
         for item in analysis["sell_guidance"]:
             st.write(f"- {item}")
 
-    st.write("量价吸筹迹象判断")
+    st.write("量价代理信号判断")
     st.write(f"- {analysis['accumulation_conclusion']}")
     for item in analysis["accumulation_signals"]:
         st.write(f"- {item}")
@@ -958,7 +1117,7 @@ def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
             "position_action": "调仓建议",
             "suggested_weight_range": "建议目标仓位",
             "trend_score": "趋势评分",
-            "accumulation_score": "量价吸筹评分",
+            "accumulation_score": "量价代理评分",
             "cost_price": "成本价",
             "shares": "持仓股数",
             "close": "最新价",
@@ -1049,8 +1208,9 @@ def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
 
 
 def render_accumulation_screener() -> None:
-    st.subheader("A股吸筹候选筛选")
-    st.caption("当前已改为复用单股分析的最终判断链路，再保留量价吸筹作为候选发现条件。")
+    st.subheader("A股量价代理候选筛选")
+    st.caption("当前已改为复用单股分析的最终判断链路，再保留量价代理信号作为候选发现条件。")
+    st.caption("这里的“量价代理”只表示量价共振偏强，不代表系统已经识别出真实主力席位或机构资金行为。")
 
     with st.form("accumulation_screener_form", clear_on_submit=False):
         col1, col2, col3 = st.columns(3)
@@ -1068,7 +1228,7 @@ def render_accumulation_screener() -> None:
             )
         with col3:
             st.caption("扫描范围越大越全面，但第一次运行会更慢；已有缓存时会明显更快。")
-        submitted = st.form_submit_button("筛选吸筹候选股票")
+        submitted = st.form_submit_button("筛选量价代理候选股票")
 
     if submitted:
         st.session_state.accumulation_scan_limit = scan_limit
@@ -1091,10 +1251,10 @@ def render_accumulation_screener() -> None:
 
     result_df = st.session_state.accumulation_scan_result
     if result_df is None:
-        st.info("设置扫描范围后点击“筛选吸筹候选股票”，筛选结果会保留在页面上。")
+        st.info("设置扫描范围后点击“筛选量价代理候选股票”，筛选结果会保留在页面上。")
         return
     if result_df.empty:
-        st.info("这次扫描没有找到量价吸筹信号足够强的股票，可以扩大扫描范围或稍后再试。")
+        st.info("这次扫描没有找到量价代理信号足够强的股票，可以扩大扫描范围或稍后再试。")
         return
 
     display_df = result_df.copy()
@@ -1104,13 +1264,15 @@ def render_accumulation_screener() -> None:
         display_df["量比"] = display_df["量比"].map(lambda x: f"{x:.2f}")
     if "综合评分" in display_df.columns:
         display_df["综合评分"] = display_df["综合评分"].map(lambda x: f"{x:.2f}")
+    if "量价吸筹评分" in display_df.columns:
+        display_df = display_df.rename(columns={"量价吸筹评分": "量价代理评分"})
     st.dataframe(display_df, use_container_width=True)
-    st.caption("这里的候选先满足单股最终结论不为“暂不推荐”，再要求量价吸筹评分达标，因此和单股页判断口径保持一致。")
+    st.caption("这里的候选先满足单股最终结论不为“暂不推荐”，再要求量价代理评分达标，因此和单股页判断口径保持一致。")
 
 
 def render_growth_candidate_panel() -> None:
     st.subheader("中线候选池")
-    st.caption("当前已改为基于单股最终结论、基本面评分、市场情绪、事件驱动和量价吸筹评分的统一筛选。")
+    st.caption("当前已改为基于单股最终结论、基本面评分、市场情绪、事件驱动和量价代理评分的统一筛选。")
 
     with st.form("growth_candidate_form", clear_on_submit=False):
         col1, col2, col3 = st.columns(3)
@@ -1244,7 +1406,7 @@ def render_analysis_logic_panel() -> None:
         [
             {"模块": "单股分析", "使用逻辑": "技术面 + 基本面 + 市场情绪 + 事件驱动 + 行业横向", "作用": "生成最终结论"},
             {"模块": "自选股分析", "使用逻辑": "复用单股分析", "作用": "给出仓位建议"},
-            {"模块": "吸筹候选", "使用逻辑": "复用统一逻辑 + 吸筹阈值", "作用": "筛选量价吸筹候选"},
+            {"模块": "量价代理候选", "使用逻辑": "复用统一逻辑 + 量价代理阈值", "作用": "筛选量价共振偏强候选"},
             {"模块": "中线候选", "使用逻辑": "复用统一逻辑 + 潜力评分", "作用": "筛选中线跟踪池"},
             {"模块": "组合选股", "使用逻辑": "复用统一逻辑 + 组合总分", "作用": "选股与回测"},
             {"模块": "策略进化", "使用逻辑": "围绕同一套权重与阈值做搜索", "作用": "优化统一参数"},
@@ -1339,7 +1501,7 @@ def render_analysis_logic_panel() -> None:
             {"条件": "min_recommendation", "当前值": thresholds["min_recommendation"], "用途": "控制能进入候选池的最低推荐级别"},
             {"条件": "min_trend_score", "当前值": thresholds["min_trend_score"], "用途": "过滤趋势偏弱个股"},
             {"条件": "min_fundamental_score", "当前值": thresholds["min_fundamental_score"], "用途": "过滤基本面保护不足个股"},
-            {"条件": "min_accumulation_score", "当前值": thresholds["min_accumulation_score"], "用途": "吸筹候选的最低门槛"},
+            {"条件": "min_accumulation_score", "当前值": thresholds["min_accumulation_score"], "用途": "量价代理候选的最低门槛"},
             {"条件": "min_growth_score", "当前值": thresholds["min_growth_score"], "用途": "中线候选的最低门槛"},
             {"条件": "min_industry_score", "当前值": thresholds["min_industry_score"], "用途": "过滤行业横向位置过弱个股"},
             {"条件": "min_event_score", "当前值": thresholds["min_event_score"], "用途": "过滤近期事件明显偏负面的个股"},
@@ -1352,6 +1514,112 @@ def render_analysis_logic_panel() -> None:
     if logic_doc.exists():
         with st.expander("打开股票分析逻辑文档"):
             st.markdown(logic_doc.read_text(encoding="utf-8"))
+
+
+def render_docs_hub_panel() -> None:
+    st.subheader("Docs 看板")
+    st.caption("这里把 docs 目录里的当前逻辑、专业化方向、缺陷 backlog 和历史修补记录集中到一个入口。")
+
+    docs_df = pd.DataFrame(
+        [
+            {
+                "文档": item["label"],
+                "位置": str(item["path"].relative_to(PROJECT_ROOT)),
+                "作用": item["role"],
+            }
+            for item in DOC_LIBRARY
+        ]
+    )
+    st.write("文档入口总览")
+    st.dataframe(docs_df.astype(str), use_container_width=True, hide_index=True)
+
+    release_text = read_doc_text(str(DOCS_ROOT / "history" / "RELEASE_NOTES.md"))
+    tracker_text = read_doc_text(str(DOCS_ROOT / "current" / "PROFESSIONALIZATION_TRACKER.md"))
+    backlog_text = read_doc_text(str(DOCS_ROOT / "current" / "PRIVATE_FUND_GAP_BACKLOG.md"))
+    readme_text = read_doc_text(str(DOCS_ROOT / "README.md"))
+
+    overview_tab, release_tab, direction_tab, issue_tab, raw_tab = st.tabs(
+        ["概览", "最近改动", "专业化方向", "问题清单", "文档原文"]
+    )
+
+    with overview_tab:
+        summary_cols = st.columns(3)
+        release_summaries = parse_release_note_summaries(release_text, limit=1)
+        tracker_df = parse_tracker_progress(tracker_text)
+        backlog_df = parse_backlog_items(backlog_text, limit=6)
+
+        with summary_cols[0]:
+            st.write("最近改了什么")
+            if release_summaries:
+                latest = release_summaries[0]
+                st.write(f"- 时间：{latest['日期']}")
+                st.write(f"- 目标：{latest['本次目标']}")
+                for item in latest["本次新增"]:
+                    st.write(f"- {item}")
+            else:
+                st.info("当前没有读到修补记录。")
+
+        with summary_cols[1]:
+            st.write("朝什么方向改")
+            if not tracker_df.empty:
+                st.dataframe(tracker_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("当前没有读到专业化追踪摘要。")
+
+        with summary_cols[2]:
+            st.write("现在还有哪些问题")
+            if not backlog_df.empty:
+                st.dataframe(backlog_df[["缺陷项", "当前状态"]], use_container_width=True, hide_index=True)
+            else:
+                st.info("当前没有读到缺陷清单。")
+
+        readme_section = extract_markdown_section(readme_text, "### 快速定位规则")
+        if readme_section:
+            with st.expander("怎么读这些文档", expanded=False):
+                st.markdown(readme_section)
+
+    with release_tab:
+        st.write("最近几次修补记录")
+        release_rows = []
+        for item in parse_release_note_summaries(release_text, limit=5):
+            release_rows.append(
+                {
+                    "日期": item["日期"],
+                    "本次目标": item["本次目标"],
+                    "新增要点": "；".join(item["本次新增"]) if item["本次新增"] else "-",
+                    "遗留问题": "；".join(item["风险或遗留问题"]) if item["风险或遗留问题"] else "-",
+                }
+            )
+        if release_rows:
+            st.dataframe(pd.DataFrame(release_rows).astype(str), use_container_width=True, hide_index=True)
+        else:
+            st.info("当前没有可展示的修补记录。")
+
+    with direction_tab:
+        st.write("专业化推进顺序")
+        tracker_df = parse_tracker_progress(tracker_text)
+        if not tracker_df.empty:
+            st.dataframe(tracker_df.astype(str), use_container_width=True, hide_index=True)
+        else:
+            st.info("当前没有可展示的专业化推进摘要。")
+
+    with issue_tab:
+        st.write("私募视角问题清单")
+        backlog_df = parse_backlog_items(backlog_text, limit=12)
+        if not backlog_df.empty:
+            st.dataframe(backlog_df.astype(str), use_container_width=True, hide_index=True)
+        else:
+            st.info("当前没有可展示的缺陷清单。")
+
+    with raw_tab:
+        selected_label = st.selectbox("选择要查看的文档", [item["label"] for item in DOC_LIBRARY], index=0)
+        selected_doc = next(item for item in DOC_LIBRARY if item["label"] == selected_label)
+        st.caption(f"当前查看：{selected_doc['path'].relative_to(PROJECT_ROOT)}")
+        doc_text = read_doc_text(str(selected_doc["path"]))
+        if doc_text:
+            st.markdown(doc_text)
+        else:
+            st.warning("当前文档不存在或尚未生成。")
 
 def render_live_paper_snapshot(auto_refresh: bool, interval_seconds: int) -> None:
     def _render_snapshot_content() -> None:
@@ -1923,8 +2191,8 @@ bootstrap_cached_result()
 render_usage_guide()
 current_scoring_config = normalize_scoring_config(st.session_state.unified_scoring_config)
 current_scoring_config_json = scoring_config_to_json(current_scoring_config)
-tab_strategy, tab_single, tab_accumulation, tab_growth, tab_logic, tab_evolution = st.tabs(
-    ["策略总览", "单股分析", "吸筹候选", "中线候选", "分析方案", "策略进化"]
+tab_strategy, tab_single, tab_accumulation, tab_growth, tab_logic, tab_evolution, tab_docs = st.tabs(
+    ["策略总览", "单股分析", "量价代理候选", "中线候选", "分析方案", "策略进化", "Docs 看板"]
 )
 
 with tab_strategy:
@@ -2092,3 +2360,6 @@ with tab_evolution:
         st.session_state.symbol_names,
         st.session_state.catalog,
     )
+
+with tab_docs:
+    render_docs_hub_panel()
