@@ -70,6 +70,7 @@ from utils.cache_manager import (
     read_cache,
     schedule_refresh,
     write_cache,
+    load_dataframe,
 )
 
 
