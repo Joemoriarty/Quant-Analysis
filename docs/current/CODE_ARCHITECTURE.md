@@ -128,6 +128,8 @@
   - `sentiment`
   - `event`
   - `industry`
+- 当前缓存支撑：
+  - 新增 `Utils/cache_manager.py`，利用 `.cache` 文件夹持久化 `catalog`、`accumulation`、`growth` 结果，页面会在后台刷新这些快照以保持热数据
 
 ### 6. 筛选与策略层
 

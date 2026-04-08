@@ -12,6 +12,7 @@ from portfolio.scoring_config import (
     normalize_scoring_config,
 )
 from portfolio.single_stock_analysis import analyze_single_stock
+from utils.cache_manager import DEFAULT_TTLS, load_dataframe
 
 
 def _recommendation_rank(recommendation: str) -> int:
@@ -103,7 +104,11 @@ def _screen_one_consistent_candidate(row: pd.Series, config: dict) -> dict | Non
 
 def screen_accumulation_candidates(scan_limit: int = 500, top_k: int = 20, config: dict | None = None) -> pd.DataFrame:
     config = normalize_scoring_config(config)
-    catalog = get_stock_catalog(limit=scan_limit)
+    catalog = load_dataframe(
+        f"catalog_{scan_limit}",
+        lambda: get_stock_catalog(limit=scan_limit),
+        DEFAULT_TTLS.get("catalog", 300),
+    )
     rows = [row for _, row in catalog.iterrows()]
     results: list[dict] = []
 
@@ -152,7 +157,11 @@ def recommend_growth_candidates(
     config: dict | None = None,
 ) -> pd.DataFrame:
     config = normalize_scoring_config(config)
-    catalog = get_stock_catalog(limit=scan_limit)
+    catalog = load_dataframe(
+        f"catalog_{scan_limit}",
+        lambda: get_stock_catalog(limit=scan_limit),
+        DEFAULT_TTLS.get("catalog", 300),
+    )
     rows = [row for _, row in catalog.iterrows()]
     results: list[dict] = []
 

@@ -65,6 +65,12 @@ from portfolio.watchlist import (
     update_watchlist_positions,
 )
 from strategies.unified_selection import run_unified_selection
+from utils.cache_manager import (
+    DEFAULT_TTLS,
+    read_cache,
+    schedule_refresh,
+    write_cache,
+)
 
 
 st.set_page_config(page_title="统一评分选股系统", layout="wide")
@@ -116,9 +122,16 @@ DOC_LIBRARY = [
 ]
 
 
+def _catalog_loader(limit: int) -> list[dict]:
+    df = get_stock_catalog(limit=limit)
+    return df.to_dict(orient="records")
+
+
 @st.cache_data(show_spinner=False)
 def load_catalog(limit: int):
-    return get_stock_catalog(limit=limit)
+    cache_key = f"catalog_{limit}"
+    ttl = DEFAULT_TTLS.get("catalog", 300)
+    return load_dataframe(cache_key, lambda: get_stock_catalog(limit=limit), ttl)
 
 
 @st.cache_data(show_spinner=False)
@@ -126,23 +139,57 @@ def load_cached_catalog(limit: int):
     return get_cached_stock_catalog(limit=limit)
 
 
-@st.cache_data(show_spinner=False)
-def load_accumulation_scan(scan_limit: int, top_k: int, config_json: str):
-    return screen_accumulation_candidates(
+def _accumulation_loader(scan_limit: int, top_k: int, config_json: str) -> str:
+    df = screen_accumulation_candidates(
         scan_limit=scan_limit,
         top_k=top_k,
         config=normalize_scoring_config(json.loads(config_json)),
     )
+    return df.to_json(orient="split")
 
 
 @st.cache_data(show_spinner=False)
-def load_growth_candidates(scan_limit: int, top_k: int, target_return: float, config_json: str):
-    return recommend_growth_candidates(
+def load_accumulation_scan(scan_limit: int, top_k: int, config_json: str):
+    cache_key = f"acc_{scan_limit}_{top_k}_{hash(config_json)}"
+    ttl = DEFAULT_TTLS.get("accumulation", 300)
+    cached = read_cache(cache_key, ttl)
+    if cached and cached.get("data"):
+        df = pd.read_json(cached["data"], orient="split")
+        if cached.get("stale"):
+            schedule_refresh(cache_key, _accumulation_loader, args=(scan_limit, top_k, config_json))
+        return df
+    data = _accumulation_loader(scan_limit, top_k, config_json)
+    write_cache(cache_key, data)
+    return pd.read_json(data, orient="split")
+
+
+def _growth_loader(scan_limit: int, top_k: int, target_return: float, config_json: str) -> str:
+    df = recommend_growth_candidates(
         scan_limit=scan_limit,
         top_k=top_k,
         target_return=target_return,
         config=normalize_scoring_config(json.loads(config_json)),
     )
+    return df.to_json(orient="split")
+
+
+@st.cache_data(show_spinner=False)
+def load_growth_candidates(scan_limit: int, top_k: int, target_return: float, config_json: str):
+    cache_key = f"growth_{scan_limit}_{top_k}_{target_return}_{hash(config_json)}"
+    ttl = DEFAULT_TTLS.get("growth", 300)
+    cached = read_cache(cache_key, ttl)
+    if cached and cached.get("data"):
+        df = pd.read_json(cached["data"], orient="split")
+        if cached.get("stale"):
+            schedule_refresh(
+                cache_key,
+                _growth_loader,
+                args=(scan_limit, top_k, target_return, config_json),
+            )
+        return df
+    data = _growth_loader(scan_limit, top_k, target_return, config_json)
+    write_cache(cache_key, data)
+    return pd.read_json(data, orient="split")
 
 
 @st.cache_data(show_spinner=False)

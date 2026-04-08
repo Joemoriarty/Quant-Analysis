@@ -14,15 +14,22 @@ from db.market_db import (
 )
 from portfolio.strategy_optimizer import run_strategy_parameter_optimization, sync_market_data_to_db
 from strategies.unified_selection import run_unified_selection
+from utils.cache_manager import DEFAULT_TTLS, load_dataframe
 
 
 DEFAULT_AUTOMATION_POOL_SIZE = 300
 
 
 def _load_catalog_for_automation(pool_size: int) -> tuple[pd.DataFrame, str | None]:
+    cache_key = f"catalog_{pool_size}"
+    ttl = DEFAULT_TTLS.get("catalog", 300)
     degraded_reason = None
     try:
-        catalog = get_stock_catalog(limit=pool_size, use_cache=False)
+        catalog = load_dataframe(
+            cache_key,
+            lambda: get_stock_catalog(limit=pool_size, use_cache=False),
+            ttl,
+        )
     except DataFetchError as error:
         degraded_reason = str(error)
         catalog = get_stock_catalog(limit=pool_size, use_cache=True)
