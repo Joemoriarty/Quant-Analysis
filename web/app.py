@@ -339,7 +339,7 @@ def render_usage_guide() -> None:
                 {"步骤": "6. Docs 看板", "说明": "想看最近改了什么、接下来往哪改、当前还有哪些问题时，直接进入 Docs 看板。"},
             ]
         )
-        st.dataframe(guide_df, use_container_width=True)
+        st.dataframe(guide_df, width="stretch")
         st.caption("单只股票分析和候选筛选现在是两个独立面板，互不覆盖，可以同时查看。")
 
 
@@ -357,7 +357,7 @@ def render_reason_guide() -> None:
                 {"指标": "操作建议", "含义": "按当前候选排名和综合得分做的分层标签", "怎么看": "重点关注代表本轮信号最强；次重点适合继续跟踪；仅观察表示先看不急着动。"},
             ]
         )
-        st.dataframe(guide_df, use_container_width=True)
+        st.dataframe(guide_df, width="stretch")
 
 
 def _format_pick_table(table: pd.DataFrame) -> pd.DataFrame:
@@ -536,7 +536,7 @@ def _render_decision_card(card: dict, title: str) -> None:
     st.write(title)
     card_df = pd.DataFrame([card]).T.reset_index()
     card_df.columns = ["项目", "内容"]
-    st.dataframe(card_df, use_container_width=True, hide_index=True)
+    st.dataframe(card_df, width="stretch", hide_index=True)
 
 
 def _render_beginner_summary(card: dict) -> None:
@@ -611,7 +611,7 @@ def render_current_pick(result: dict) -> None:
         display_df = _format_pick_table(table)
         display_df.index = display_df.index + 1
         display_df.index.name = "排名"
-        st.dataframe(display_df, use_container_width=True)
+        st.dataframe(display_df, width="stretch")
 
         st.write("推荐股票交易决策卡")
         shown = 0
@@ -639,7 +639,7 @@ def render_current_pick(result: dict) -> None:
             [{"策略": name, "权重": value} for name, value in current_pick["weights"].items()]
         ).sort_values("权重", ascending=False)
         st.write("当前信号使用的策略权重")
-        st.dataframe(weights_df, use_container_width=True)
+        st.dataframe(weights_df, width="stretch")
 
     if risk_summary:
         st.write("当前组合风险约束摘要")
@@ -656,7 +656,7 @@ def render_current_pick(result: dict) -> None:
                 {"约束项": "当前行业暴露", "当前设置": str(risk_summary.get("industry_exposure", {}))},
             ]
         )
-        st.dataframe(risk_df, use_container_width=True, hide_index=True)
+        st.dataframe(risk_df, width="stretch", hide_index=True)
 
     render_reason_guide()
 
@@ -710,13 +710,13 @@ def render_debug_panel(result: dict, symbol_names: dict[str, str]) -> None:
                     for symbol, message in errors.items()
                 ]
             )
-            st.dataframe(error_df, use_container_width=True)
+            st.dataframe(error_df, width="stretch")
         else:
             st.success("股票行情加载成功，没有发现数据源错误。")
 
         diagnostics = result["diagnostics"]
         if not diagnostics.empty:
-            st.dataframe(diagnostics, use_container_width=True)
+            st.dataframe(diagnostics, width="stretch")
 
 
 def render_weights(weights_df: pd.DataFrame) -> None:
@@ -725,7 +725,7 @@ def render_weights(weights_df: pd.DataFrame) -> None:
         return
     numeric_cols = [col for col in weights_df.columns if col != "调仓日"]
     st.area_chart(weights_df.set_index("调仓日")[numeric_cols])
-    st.dataframe(weights_df, use_container_width=True)
+    st.dataframe(weights_df, width="stretch")
 
 
 def render_holdings(result: dict) -> None:
@@ -734,7 +734,7 @@ def render_holdings(result: dict) -> None:
         st.info("暂无调仓明细。")
         return
 
-    st.dataframe(holdings, use_container_width=True)
+    st.dataframe(holdings, width="stretch")
 
     latest = result["rebalance_records"][-1]
     st.subheader("最近一次历史调仓详情")
@@ -746,7 +746,7 @@ def render_holdings(result: dict) -> None:
     selected_detail = pd.DataFrame(latest["selected_detail"])
     if not selected_detail.empty:
         st.write("最近一次历史调仓的入选股票与推荐理由")
-        st.dataframe(_format_pick_table(selected_detail), use_container_width=True)
+        st.dataframe(_format_pick_table(selected_detail), width="stretch")
 
     realized_positions = pd.DataFrame(latest["realized_positions"])
     if not realized_positions.empty:
@@ -760,7 +760,7 @@ def render_holdings(result: dict) -> None:
                     "weighted_return": "加权贡献",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
 
@@ -770,7 +770,7 @@ def render_pool_preview(catalog: pd.DataFrame) -> None:
         available = [col for col in preview_cols if col in catalog.columns]
         preview = catalog[available].copy()
         preview.columns = ["代码", "名称", "60日涨幅", "年内涨幅", "换手率", "入池原因"][: len(available)]
-        st.dataframe(preview.head(20), use_container_width=True)
+        st.dataframe(preview.head(20), width="stretch")
 
 
 def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
@@ -823,7 +823,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
                 {"问题": "赚了怎么办", "答案": f"先看 {decision_card['第一止盈位']}，再看 {decision_card['第二止盈位']}"},
             ]
         )
-        st.dataframe(quick_df, use_container_width=True, hide_index=True)
+        st.dataframe(quick_df, width="stretch", hide_index=True)
     _render_decision_card(decision_card, "单股交易决策卡")
 
     cols = st.columns(5)
@@ -909,7 +909,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
             )
             st.dataframe(
                 overview_df[["子模块", "子评分", "样本数", "汇总权重", "可用"]].astype(str),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             st.code(
@@ -923,7 +923,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
         st.caption(fundamental_summary.get("headline", ""))
         summary_df = pd.DataFrame(fundamental_summary.get("items", []))
         if not summary_df.empty:
-            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+            st.dataframe(summary_df, width="stretch", hide_index=True)
         st.write(f"- {fundamental_summary.get('conclusion', '')}")
         if analysis.get("final_decision_basis"):
             st.write(f"- 当前结论依据：{analysis['final_decision_basis']}")
@@ -948,7 +948,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
         st.caption(market_sentiment_summary.get("headline", ""))
         sentiment_df = pd.DataFrame(market_sentiment_summary.get("items", []))
         if not sentiment_df.empty:
-            st.dataframe(sentiment_df, use_container_width=True, hide_index=True)
+            st.dataframe(sentiment_df, width="stretch", hide_index=True)
         st.write(f"- {market_sentiment_summary.get('conclusion', '')}")
     else:
         st.info(market_sentiment_summary.get("headline", "当前没有可用的市场情绪快照"))
@@ -965,7 +965,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
         event_cols[2].metric("事件数量", str(len(analysis.get("company_events", []))))
         event_df = pd.DataFrame(event_summary.get("items", []))
         if not event_df.empty:
-            st.dataframe(event_df.astype(str), use_container_width=True, hide_index=True)
+            st.dataframe(event_df.astype(str), width="stretch", hide_index=True)
         st.write(f"- {event_summary.get('conclusion', '')}")
         for item in event_summary.get("positive_flags", []):
             st.write(f"- {item}")
@@ -985,7 +985,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
                         st.write(f"- 当前评分：{result['score']}/100")
                     items_df = pd.DataFrame(result.get("items", []))
                     if not items_df.empty:
-                        st.dataframe(items_df.astype(str), use_container_width=True, hide_index=True)
+                        st.dataframe(items_df.astype(str), width="stretch", hide_index=True)
                     if result.get("conclusion"):
                         st.write(f"- {result['conclusion']}")
                     if result.get("sample_warning"):
@@ -1043,14 +1043,14 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
 
     st.write("分批卖出计划表")
     sell_plan_df = pd.DataFrame(analysis["sell_plan"])
-    st.dataframe(sell_plan_df, use_container_width=True)
+    st.dataframe(sell_plan_df, width="stretch")
 
     st.write("加仓参考")
     add_position_df = pd.DataFrame(analysis["add_position_guidance"])
-    st.dataframe(add_position_df, use_container_width=True)
+    st.dataframe(add_position_df, width="stretch")
 
     st.write("近期 K 线与均线")
-    st.altair_chart(analysis["chart"], use_container_width=True)
+    st.altair_chart(analysis["chart"], width="stretch")
 
 
 def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
@@ -1109,7 +1109,7 @@ def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
                 "added_at": "加入时间",
             }
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         disabled=["代码", "股票", "加入时间"],
         key="watchlist_editor",
@@ -1155,7 +1155,7 @@ def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
             [{"股票代码": symbol, "原因": message} for symbol, message in errors.items()]
         )
         st.warning("部分自选股分析失败，已自动跳过。")
-        st.dataframe(error_df, use_container_width=True, hide_index=True)
+        st.dataframe(error_df, width="stretch", hide_index=True)
 
     if result_df is None or result_df.empty:
         st.caption("点击“批量分析自选股”后，这里会给出每只自选股的结论、交易决策卡和风险提示。")
@@ -1205,7 +1205,7 @@ def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
     summary_df["20日动量"] = summary_df["20日动量"].map(lambda x: f"{x:.2%}")
     summary_df["量比"] = summary_df["量比"].map(lambda x: f"{x:.2f}")
     st.write("自选股分析总览")
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    st.dataframe(summary_df, width="stretch", hide_index=True)
 
     rebalance_df = build_watchlist_rebalance_plan(result_df)
     if not rebalance_df.empty:
@@ -1228,7 +1228,7 @@ def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
             display_rebalance[col] = display_rebalance[col].map(lambda x: f"{x:.2%}" if pd.notna(x) else "")
         display_rebalance["参考价"] = display_rebalance["参考价"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
         st.write("自选股调仓差额表")
-        st.dataframe(display_rebalance, use_container_width=True, hide_index=True)
+        st.dataframe(display_rebalance, width="stretch", hide_index=True)
         st.caption("说明：如果你没有手动填写目标仓位，系统会用“建议目标仓位”的中位值来估算目标市值，再对比你当前市值，给出大致该补多少或减多少。")
 
         execution_df = build_watchlist_execution_list(result_df)
@@ -1249,7 +1249,7 @@ def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
                 lambda x: f"{x:.2f}" if pd.notna(x) else ""
             )
             st.write("调仓执行清单")
-            st.dataframe(display_execution, use_container_width=True, hide_index=True)
+            st.dataframe(display_execution, width="stretch", hide_index=True)
             st.caption("执行顺序默认先减仓再补仓，避免在总资金有限时先买后卖。股数按100股一手粗略换算，适合做操作参考。")
 
     st.write("自选股交易决策卡")
@@ -1271,7 +1271,7 @@ def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
                     {"项目": "加仓判断", "内容": row.get("add_action", "-")},
                 ]
             )
-            st.dataframe(advice_df, use_container_width=True, hide_index=True)
+            st.dataframe(advice_df, width="stretch", hide_index=True)
             if row.get("note"):
                 st.caption(f"我的备注：{row['note']}")
 
@@ -1356,7 +1356,7 @@ def render_accumulation_screener() -> None:
         display_df["综合评分"] = display_df["综合评分"].map(lambda x: f"{x:.2f}")
     if "量价吸筹评分" in display_df.columns:
         display_df = display_df.rename(columns={"量价吸筹评分": "量价代理评分"})
-    st.dataframe(display_df, use_container_width=True)
+    st.dataframe(display_df, width="stretch")
     st.caption("这里的候选先满足单股最终结论不为“暂不推荐”，再要求量价代理评分达标，因此和单股页判断口径保持一致。")
 
 
@@ -1426,7 +1426,7 @@ def render_growth_candidate_panel() -> None:
         display_df["20日动量"] = display_df["20日动量"].map(lambda x: f"{x:.2%}")
     if "量比" in display_df.columns:
         display_df["量比"] = display_df["量比"].map(lambda x: f"{x:.2f}")
-    st.dataframe(display_df, use_container_width=True)
+    st.dataframe(display_df, width="stretch")
     st.caption("入选逻辑现在和单股判断一致，额外用潜力评分做排序。30% 是一年目标收益假设，不代表承诺收益。")
 
 
@@ -1571,7 +1571,7 @@ def render_analysis_logic_panel() -> None:
         ]
     )
     st.write("统一覆盖范围")
-    st.dataframe(overview_df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(overview_df.astype(str), width="stretch", hide_index=True)
 
     comparison_type_df = pd.DataFrame(
         [
@@ -1586,7 +1586,7 @@ def render_analysis_logic_panel() -> None:
     )
     st.write("当前对比插件")
     if not comparison_type_df.empty:
-        st.dataframe(comparison_type_df.astype(str), use_container_width=True, hide_index=True)
+        st.dataframe(comparison_type_df.astype(str), width="stretch", hide_index=True)
         industry_plugin_df = pd.DataFrame(
             [
                 {"行业子评分": "行业质量比较", "插件": "industry_peers", "汇总权重": "45%", "主要依据": "ROE、负债率、净利润、营收、现金流、体量"},
@@ -1595,7 +1595,7 @@ def render_analysis_logic_panel() -> None:
             ]
         )
         st.write("行业横向总分拆解")
-        st.dataframe(industry_plugin_df.astype(str), use_container_width=True, hide_index=True)
+        st.dataframe(industry_plugin_df.astype(str), width="stretch", hide_index=True)
         st.code(
             "industry_comparison_score = 行业质量比较*0.45 + 行业估值分位*0.25 + 行业增长性比较*0.30",
             language="text",
@@ -1615,7 +1615,7 @@ def render_analysis_logic_panel() -> None:
         ]
     )
     st.write("如何判断股票价值")
-    st.dataframe(value_df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(value_df.astype(str), width="stretch", hide_index=True)
 
     rule_df = pd.DataFrame(
         [
@@ -1628,7 +1628,7 @@ def render_analysis_logic_panel() -> None:
         ]
     )
     st.write("最终判断路径")
-    st.dataframe(rule_df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(rule_df.astype(str), width="stretch", hide_index=True)
 
     scoring_df = pd.DataFrame(
         [
@@ -1644,7 +1644,7 @@ def render_analysis_logic_panel() -> None:
         ]
     )
     st.write("统一评分算法")
-    st.dataframe(scoring_df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(scoring_df.astype(str), width="stretch", hide_index=True)
     st.code(
         f"portfolio_score = trend_score*{weights['trend']:.2f} + fundamental_score*{weights['fundamental']:.2f} + accumulation_score*{weights['accumulation']:.2f} + sentiment_score*{weights['sentiment']:.2f} + event_score*{weights['event']:.2f} + industry_score*{weights['industry']:.2f} + recommendation_bonus",
         language="text",
@@ -1669,7 +1669,7 @@ def render_analysis_logic_panel() -> None:
         ]
     )
     st.write("统一阈值")
-    st.dataframe(threshold_df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(threshold_df.astype(str), width="stretch", hide_index=True)
 
     logic_doc = Path(__file__).resolve().parent.parent / "docs" / "STOCK_ANALYSIS_LOGIC.md"
     if logic_doc.exists():
@@ -1723,7 +1723,7 @@ def render_live_paper_snapshot(auto_refresh: bool, interval_seconds: int) -> Non
                         "浮盈亏比例",
                     ]
                 ],
-                use_container_width=True,
+                width="stretch",
             )
 
         mark_log = load_mark_log()
@@ -1749,7 +1749,7 @@ def render_live_paper_snapshot(auto_refresh: bool, interval_seconds: int) -> Non
             mark_display["盈亏比例"] = mark_display["盈亏比例"].map(
                 lambda x: f"{x:.2%}" if pd.notna(x) else ""
             )
-            st.dataframe(mark_display, use_container_width=True)
+            st.dataframe(mark_display, width="stretch")
 
     if auto_refresh and hasattr(st, "fragment"):
         @st.fragment(run_every=f"{interval_seconds}s")
@@ -1837,7 +1837,7 @@ def render_paper_trading_panel(result: dict) -> None:
                     "entry_price_source": "建仓价来源",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
         render_live_paper_snapshot(auto_refresh=auto_refresh, interval_seconds=interval_seconds)
@@ -1846,7 +1846,7 @@ def render_paper_trading_panel(result: dict) -> None:
         if not perf_df.empty:
             perf_df["组合收益"] = perf_df["组合收益"].map(lambda x: f"{x:.2%}")
             st.write("模拟收益历史")
-            st.dataframe(perf_df, use_container_width=True)
+            st.dataframe(perf_df, width="stretch")
 
 
 def render_quant_review_panel(result: dict) -> None:
@@ -1896,7 +1896,7 @@ def render_quant_review_panel(result: dict) -> None:
     display_df["是否盈利"] = display_df["是否盈利"].map(lambda x: "是" if x else "否")
     st.dataframe(
         display_df[["持仓日期", "评估日期", "期初资金", "期末资金", "组合收益", "累计净值", "持仓数量", "是否盈利", "说明"]],
-        use_container_width=True,
+        width="stretch",
     )
     st.caption("这块面板专门用于回看每期模拟持仓的收益、累计净值和胜率。现在表里会直接展示期初资金和期末资金，方便你手工复核。")
 
@@ -1919,7 +1919,7 @@ def render_quant_review_panel(result: dict) -> None:
                 detail_display[ratio_col] = detail_display[ratio_col].map(
                     lambda x: f"{x:.2%}" if pd.notna(x) else "价格缺失"
                 )
-        st.dataframe(detail_display, use_container_width=True)
+        st.dataframe(detail_display, width="stretch")
         st.caption("核验方法：建仓金额 = 建仓价 × 买入股数；评估市值 = 评估价 × 买入股数；盈亏金额 = 评估市值 - 建仓金额；组合收益率 = (期末资金 - 期初资金) / 期初资金。`评估类型` 为“当前估值”时，表示这还不是实际卖出，只是按最新日线价格做浮盈浮亏估算。")
 
     ledger_df = build_trade_ledger(result["latest_prices"], result["current_pick"]["as_of_date"])
@@ -1930,7 +1930,7 @@ def render_quant_review_panel(result: dict) -> None:
             ledger_display[col] = ledger_display[col].map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
         for col in ["金额", "收益金额"]:
             ledger_display[col] = ledger_display[col].map(lambda x: f"{x:,.2f}" if pd.notna(x) else "")
-        st.dataframe(ledger_display, use_container_width=True)
+        st.dataframe(ledger_display, width="stretch")
 
 
 def render_evolution_panel(symbols: list[str], symbol_names: dict[str, str], catalog: pd.DataFrame) -> None:
@@ -1982,7 +1982,7 @@ def render_evolution_panel(symbols: list[str], symbol_names: dict[str, str], cat
                     "error_message": "错误信息",
                 }
             )
-            st.dataframe(display_runs, use_container_width=True)
+            st.dataframe(display_runs, width="stretch")
 
     workflow_task_restore_id = render_async_task_center(
         "策略进化后台任务",
@@ -2175,7 +2175,7 @@ def render_evolution_panel(symbols: list[str], symbol_names: dict[str, str], cat
         result = restored_task_payload.get("result")
         with st.expander(f"恢复结果：{task.get('label', '后台任务')}", expanded=False):
             if isinstance(result, pd.DataFrame):
-                st.dataframe(result, use_container_width=True)
+                st.dataframe(result, width="stretch")
             elif isinstance(result, dict):
                 st.json(result)
             else:
@@ -2247,6 +2247,15 @@ with tab_strategy:
         get_setting("last_daily_update", {}),
         get_setting("last_weekly_optimization", {}),
     )
+    if (
+        st.session_state.last_result is None
+        and not st.session_state.symbols
+        and not st.session_state.catalog_bootstrapped
+    ):
+        st.info(
+            "服务已经启动成功。当前只是还没有恢复到本地缓存股票池或最近一次策略结果。"
+            "第一次使用时，请先点击“加载股票池”，再点击“运行策略”。"
+        )
     st.divider()
     pool_col1, pool_col2, pool_col3 = st.columns(3)
     with pool_col1:
@@ -2378,7 +2387,7 @@ with tab_strategy:
         else:
             st.subheader("组合净值走势")
             st.line_chart(curve)
-            st.dataframe(curve.rename("净值").to_frame(), use_container_width=True)
+            st.dataframe(curve.rename("净值").to_frame(), width="stretch")
 
             left_col, right_col = st.columns(2)
             with left_col:

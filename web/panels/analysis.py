@@ -26,7 +26,7 @@ def render_execution_plan_panel(analysis: dict) -> None:
             {"项目": "第二止盈位", "内容": str(summary.get("second_take_profit") or "-")},
         ]
     )
-    st.dataframe(detail_df, use_container_width=True, hide_index=True)
+    st.dataframe(detail_df, width="stretch", hide_index=True)
     st.write(f"- 执行动作解释：{summary.get('action_reasoning', '-')}")
     st.write(f"- 当前执行备注：{summary.get('execution_commentary', '-')}")
     st.write(f"- 升级条件：{summary.get('trigger_to_upgrade', '-')}")
@@ -51,7 +51,7 @@ def render_target_price_panel(analysis: dict) -> None:
     overview_cols[1].metric("保守情景", f"{float(scenarios.get('bear_case_price', 0.0)):.2f}")
     overview_cols[2].metric("基准情景", f"{float(scenarios.get('base_case_price', 0.0)):.2f}")
     overview_cols[3].metric("乐观情景", f"{float(scenarios.get('bull_case_price', 0.0)):.2f}")
-    st.dataframe(pd.DataFrame(items).astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(items).astype(str), width="stretch", hide_index=True)
 
 
 def render_evaluation_framework_panel(analysis: dict) -> None:
@@ -71,10 +71,10 @@ def render_evaluation_framework_panel(analysis: dict) -> None:
                 {"项目": "当前立场", "内容": str(summary.get("overall_stance") or "-")},
             ]
         )
-        st.dataframe(overview_df, use_container_width=True, hide_index=True)
+        st.dataframe(overview_df, width="stretch", hide_index=True)
 
     framework_df = pd.DataFrame(items)
-    st.dataframe(framework_df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(framework_df.astype(str), width="stretch", hide_index=True)
 
 
 def render_news_panel(analysis: dict) -> None:
@@ -93,7 +93,7 @@ def render_news_panel(analysis: dict) -> None:
 
     items = summary.get("items") or []
     if items:
-        st.dataframe(pd.DataFrame(items).astype(str), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(items).astype(str), width="stretch", hide_index=True)
     st.write(f"- {summary.get('conclusion', '-')}")
 
     positive_flags = summary.get("positive_flags") or []
@@ -117,12 +117,12 @@ def render_data_source_panel(analysis: dict) -> None:
 
     st.write("数据来源与降级路径")
     st.caption(str(summary.get("headline") or ""))
-    st.dataframe(pd.DataFrame(items).astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(items).astype(str), width="stretch", hide_index=True)
 
     platform_matrix = summary.get("platform_matrix") or []
     if platform_matrix:
         with st.expander("统一数据来源矩阵"):
-            st.dataframe(pd.DataFrame(platform_matrix).astype(str), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(platform_matrix).astype(str), width="stretch", hide_index=True)
 
 
 def render_research_workflow_panel(analysis: dict) -> None:
@@ -142,7 +142,7 @@ def render_research_workflow_panel(analysis: dict) -> None:
                 {"项目": "下次复核", "内容": str(research.get("next_review_window") or "-")},
             ]
         )
-        st.dataframe(review_df, use_container_width=True, hide_index=True)
+        st.dataframe(review_df, width="stretch", hide_index=True)
 
     detail_cols = st.columns(3)
     with detail_cols[0]:
@@ -176,7 +176,7 @@ def render_research_workflow_panel(analysis: dict) -> None:
     if tracking_items:
         st.write("跟踪指标")
         tracking_df = pd.DataFrame(tracking_items)
-        st.dataframe(tracking_df.astype(str), use_container_width=True, hide_index=True)
+        st.dataframe(tracking_df.astype(str), width="stretch", hide_index=True)
 
 
 def render_risk_committee_panel(analysis: dict) -> None:
@@ -207,4 +207,4 @@ def render_risk_committee_panel(analysis: dict) -> None:
                 "说明": str(item.get("summary") or "-"),
             }
         )
-    st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(detail_rows), width="stretch", hide_index=True)

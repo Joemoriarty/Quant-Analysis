@@ -110,7 +110,7 @@ def render_docs_hub_panel(project_root: Path, docs_root: Path, doc_library: list
         ]
     )
     st.write("文档入口总览")
-    st.dataframe(docs_df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(docs_df.astype(str), width="stretch", hide_index=True)
 
     release_text = read_doc_text(str(docs_root / "history" / "RELEASE_NOTES.md"))
     tracker_text = read_doc_text(str(docs_root / "current" / "PROFESSIONALIZATION_TRACKER.md"))
@@ -141,14 +141,14 @@ def render_docs_hub_panel(project_root: Path, docs_root: Path, doc_library: list
         with summary_cols[1]:
             st.write("朝什么方向改")
             if not tracker_df.empty:
-                st.dataframe(tracker_df, use_container_width=True, hide_index=True)
+                st.dataframe(tracker_df, width="stretch", hide_index=True)
             else:
                 st.info("当前没有读到专业化追踪摘要。")
 
         with summary_cols[2]:
             st.write("现在还有哪些问题")
             if not backlog_df.empty:
-                st.dataframe(backlog_df[["缺陷项", "当前状态"]], use_container_width=True, hide_index=True)
+                st.dataframe(backlog_df[["缺陷项", "当前状态"]], width="stretch", hide_index=True)
             else:
                 st.info("当前没有读到缺陷清单。")
 
@@ -170,7 +170,7 @@ def render_docs_hub_panel(project_root: Path, docs_root: Path, doc_library: list
                 }
             )
         if release_rows:
-            st.dataframe(pd.DataFrame(release_rows).astype(str), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(release_rows).astype(str), width="stretch", hide_index=True)
         else:
             st.info("当前没有可展示的修补记录。")
 
@@ -178,7 +178,7 @@ def render_docs_hub_panel(project_root: Path, docs_root: Path, doc_library: list
         st.write("专业化推进顺序")
         tracker_df = parse_tracker_progress(tracker_text)
         if not tracker_df.empty:
-            st.dataframe(tracker_df.astype(str), use_container_width=True, hide_index=True)
+            st.dataframe(tracker_df.astype(str), width="stretch", hide_index=True)
         else:
             st.info("当前没有可展示的专业化推进摘要。")
 
@@ -186,7 +186,7 @@ def render_docs_hub_panel(project_root: Path, docs_root: Path, doc_library: list
         st.write("私募视角问题清单")
         backlog_df = parse_backlog_items(backlog_text, limit=12)
         if not backlog_df.empty:
-            st.dataframe(backlog_df.astype(str), use_container_width=True, hide_index=True)
+            st.dataframe(backlog_df.astype(str), width="stretch", hide_index=True)
         else:
             st.info("当前没有可展示的缺陷清单。")
 

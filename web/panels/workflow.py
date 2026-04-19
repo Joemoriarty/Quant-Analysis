@@ -31,7 +31,7 @@ def render_async_task_center(title: str, tasks_source, key_prefix: str, auto_ref
             for task in tasks
         ]
         st.write(title)
-        st.dataframe(pd.DataFrame(summary_rows).astype(str), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(summary_rows).astype(str), width="stretch", hide_index=True)
 
         for task in tasks[:5]:
             task_label = f"{task.get('label')} | {task.get('status')}"
@@ -122,7 +122,7 @@ def render_research_workbench_home(
                 ),
             },
         ]
-        st.dataframe(pd.DataFrame(summary_rows).astype(str), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(summary_rows).astype(str), width="stretch", hide_index=True)
 
         if not table.empty:
             watch_df = table.copy()
@@ -147,7 +147,7 @@ def render_research_workbench_home(
             st.write("当前重点候选与暴露摘要")
             st.dataframe(
                 watch_df[["股票", "最终结论", "综合评分", "组合权重", "行业", "行业横向分", "成交额估算"]],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
     else:
