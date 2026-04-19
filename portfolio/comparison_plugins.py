@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
+import akshare as ak
 import pandas as pd
 
 from data.fundamental_loader import load_or_fetch_industry_peer_snapshots
@@ -99,6 +102,29 @@ def _weighted_score(score_items: list[tuple[float | None, float]]) -> float | No
         return None
     total_weight = sum(weight for _, weight in used)
     return sum(score * weight for score, weight in used) / total_weight
+
+
+@lru_cache(maxsize=128)
+def _cached_industry_board_snapshot() -> pd.DataFrame:
+    try:
+        return ak.stock_board_industry_name_em()
+    except Exception:
+        return pd.DataFrame()
+
+
+def _pick_board_row(industry_name: str) -> pd.Series | None:
+    df = _cached_industry_board_snapshot()
+    if df is None or df.empty:
+        return None
+    name_col = next((col for col in ["板块名称", "名称", "name"] if col in df.columns), None)
+    if not name_col:
+        return None
+    matched = df[df[name_col].astype(str) == industry_name]
+    if matched.empty:
+        matched = df[df[name_col].astype(str).str.contains(industry_name, na=False)]
+    if matched.empty:
+        return None
+    return matched.iloc[0]
 
 
 def _load_industry_peer_context(context: dict) -> tuple[str, dict, dict, pd.DataFrame | None]:
@@ -391,6 +417,90 @@ def build_industry_growth_comparison(context: dict) -> dict:
         "risk_flags": risk_flags,
         "peer_count": int(len(peer_df)),
         "score": None if score is None else round(score, 2),
+        "industry_name": industry_name,
+    }
+
+
+@register_comparison_type("industry_heat", "行业景气与热度")
+def build_industry_heat_comparison(context: dict) -> dict:
+    industry_name, _, _, peer_df = _load_industry_peer_context(context)
+    if not industry_name:
+        return _build_unavailable_result(
+            "industry_heat",
+            "行业景气与热度",
+            "当前缺少行业归属，暂时无法做行业景气与热度比较。",
+            "没有行业归属时，无法判断板块热度和行业景气方向。",
+        )
+
+    board_row = _pick_board_row(industry_name)
+    if board_row is None:
+        return _build_unavailable_result(
+            "industry_heat",
+            "行业景气与热度",
+            f"已识别行业“{industry_name}”，但当前没有可用的板块热度快照。",
+            "缺少板块热度快照时，暂时不输出行业景气与热度结论。",
+        )
+
+    pct_change_col = next((col for col in ["涨跌幅", "涨跌额"] if col in board_row.index), None)
+    turnover_col = next((col for col in ["换手率"] if col in board_row.index), None)
+    rise_count_col = next((col for col in ["上涨家数"] if col in board_row.index), None)
+    fall_count_col = next((col for col in ["下跌家数"] if col in board_row.index), None)
+    leading_col = next((col for col in ["领涨股票", "领涨股"] if col in board_row.index), None)
+
+    pct_change = pd.to_numeric(board_row.get(pct_change_col), errors="coerce") if pct_change_col else pd.NA
+    turnover = pd.to_numeric(board_row.get(turnover_col), errors="coerce") if turnover_col else pd.NA
+    rise_count = pd.to_numeric(board_row.get(rise_count_col), errors="coerce") if rise_count_col else pd.NA
+    fall_count = pd.to_numeric(board_row.get(fall_count_col), errors="coerce") if fall_count_col else pd.NA
+    breadth = None
+    if pd.notna(rise_count) and pd.notna(fall_count) and float(rise_count + fall_count) > 0:
+        breadth = float((rise_count - fall_count) / (rise_count + fall_count) * 100)
+
+    score = 50.0
+    positive_flags: list[str] = []
+    risk_flags: list[str] = []
+    items = [{"比较项": "行业", "当前值": industry_name, "同行中位数": "-", "行业内排名": "-", "分位": "-"}]
+
+    if pd.notna(pct_change):
+        score += min(18.0, max(-18.0, float(pct_change) * 3.0))
+        items.append({"比较项": "板块涨跌幅", "当前值": f"{float(pct_change):.2f}%", "同行中位数": "-", "行业内排名": "-", "分位": "-"})
+        if float(pct_change) >= 2.0:
+            positive_flags.append("板块当日涨幅较强，行业热度明显抬升。")
+        elif float(pct_change) <= -1.5:
+            risk_flags.append("板块当日明显走弱，行业热度承压。")
+    if pd.notna(turnover):
+        score += min(10.0, max(-4.0, (float(turnover) - 3.0) * 1.5))
+        items.append({"比较项": "板块换手率", "当前值": f"{float(turnover):.2f}%", "同行中位数": "-", "行业内排名": "-", "分位": "-"})
+        if float(turnover) >= 4.5:
+            positive_flags.append("板块换手率较高，短期资金关注度偏强。")
+    if breadth is not None:
+        score += min(12.0, max(-12.0, breadth * 0.2))
+        items.append({"比较项": "板块广度", "当前值": f"{breadth:.1f}", "同行中位数": "-", "行业内排名": "-", "分位": "-"})
+        if breadth >= 20:
+            positive_flags.append("板块内上涨家数明显占优，扩散性较好。")
+        elif breadth <= -20:
+            risk_flags.append("板块内下跌家数明显占优，景气度偏弱。")
+    if leading_col and board_row.get(leading_col):
+        items.append({"比较项": "领涨股", "当前值": str(board_row.get(leading_col)), "同行中位数": "-", "行业内排名": "-", "分位": "-"})
+
+    score = max(0.0, min(100.0, score))
+    if score >= 70:
+        conclusion = "当前行业景气与板块热度偏强，短期更容易形成行业合力。"
+    elif score >= 50:
+        conclusion = "当前行业景气与板块热度大体中性，可作为辅助确认项。"
+    else:
+        conclusion = "当前行业景气与板块热度偏弱，行业合力不足。"
+
+    return {
+        "name": "industry_heat",
+        "title": "行业景气与热度",
+        "available": True,
+        "headline": f"基于“{industry_name}”板块快照，补足行业景气与短期热度判断。",
+        "items": items,
+        "conclusion": conclusion,
+        "positive_flags": positive_flags,
+        "risk_flags": risk_flags,
+        "peer_count": 0 if peer_df is None else int(len(peer_df)),
+        "score": round(score, 2),
         "industry_name": industry_name,
     }
 

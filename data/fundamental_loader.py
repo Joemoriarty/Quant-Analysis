@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import akshare as ak
@@ -68,6 +69,204 @@ def _snapshot_is_recent(snapshot: dict | None, max_age_hours: float, time_keys: 
         if not pd.isna(timestamp):
             return timestamp >= pd.Timestamp.now() - pd.Timedelta(hours=max_age_hours)
     return False
+
+
+def _normalize_tushare_code(symbol: str) -> str:
+    normalized = str(symbol).zfill(6)
+    if normalized.startswith(("4", "8")):
+        suffix = ".BJ"
+    elif normalized.startswith(("5", "6", "9")):
+        suffix = ".SH"
+    else:
+        suffix = ".SZ"
+    return f"{normalized}{suffix}"
+
+
+def _needs_backup(snapshot: dict | None, required_fields: list[str]) -> bool:
+    if not snapshot:
+        return True
+    for field in required_fields:
+        value = snapshot.get(field)
+        if value is None:
+            return True
+        if isinstance(value, str) and value.strip().lower() in {"", "nan", "none"}:
+            return True
+    return False
+
+
+def _merge_snapshot(primary: dict | None, backup: dict | None, *, required_fields: list[str]) -> dict | None:
+    if not primary and not backup:
+        return None
+    if not primary:
+        merged = dict(backup or {})
+        merged["source"] = merged.get("source", "tushare")
+        merged["source_chain"] = merged["source"]
+        return merged
+    merged = dict(primary)
+    if not backup:
+        merged["source_chain"] = merged.get("source")
+        return merged
+
+    used_backup_fields: list[str] = []
+    for field in required_fields:
+        primary_value = merged.get(field)
+        if primary_value is None or (
+            isinstance(primary_value, str) and primary_value.strip().lower() in {"", "nan", "none"}
+        ):
+            backup_value = backup.get(field)
+            if backup_value is not None and not (isinstance(backup_value, str) and not backup_value.strip()):
+                merged[field] = backup_value
+                used_backup_fields.append(field)
+
+    backup_source = backup.get("source")
+    primary_source = merged.get("source")
+    if used_backup_fields and backup_source:
+        merged["backup_source"] = backup_source
+        merged["backup_fields"] = used_backup_fields
+        if primary_source and primary_source != backup_source:
+            merged["source_chain"] = f"{primary_source} -> {backup_source}"
+        else:
+            merged["source_chain"] = backup_source
+    else:
+        merged["source_chain"] = primary_source
+    return merged
+
+
+def _get_tushare_client():
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if not token:
+        return None
+    try:
+        import tushare as ts
+    except Exception:
+        return None
+    try:
+        return ts.pro_api(token)
+    except Exception:
+        return None
+
+
+def _build_period_lookup(df: pd.DataFrame, value_column: str) -> dict[str, float]:
+    if df is None or df.empty or "end_date" not in df.columns or value_column not in df.columns:
+        return {}
+    subset = df[["end_date", value_column]].copy()
+    subset["end_date"] = subset["end_date"].astype(str)
+    subset[value_column] = pd.to_numeric(subset[value_column], errors="coerce")
+    subset = subset.dropna(subset=["end_date", value_column])
+    return {row["end_date"]: float(row[value_column]) for _, row in subset.iterrows()}
+
+
+def _fetch_tushare_fundamental_snapshot(symbol: str) -> tuple[dict | None, dict | None]:
+    pro = _get_tushare_client()
+    if pro is None:
+        return None, None
+
+    ts_code = _normalize_tushare_code(symbol)
+    try:
+        basic_df = pro.stock_basic(
+            ts_code=ts_code,
+            fields="ts_code,symbol,name,industry",
+        )
+    except Exception:
+        basic_df = pd.DataFrame()
+
+    try:
+        daily_basic_df = pro.daily_basic(
+            ts_code=ts_code,
+            fields="ts_code,trade_date,pe,pb,ps_ttm,dv_ttm,total_mv",
+            limit=1,
+        )
+    except Exception:
+        daily_basic_df = pd.DataFrame()
+
+    try:
+        income_df = pro.income(
+            ts_code=ts_code,
+            fields="ts_code,end_date,total_revenue,n_income_attr_p",
+            limit=8,
+        )
+    except Exception:
+        income_df = pd.DataFrame()
+
+    try:
+        indicator_df = pro.fina_indicator(
+            ts_code=ts_code,
+            fields="ts_code,end_date,roe,debt_to_assets",
+            limit=8,
+        )
+    except Exception:
+        indicator_df = pd.DataFrame()
+
+    try:
+        cashflow_df = pro.cashflow(
+            ts_code=ts_code,
+            fields="ts_code,end_date,n_cashflow_act",
+            limit=8,
+        )
+    except Exception:
+        cashflow_df = pd.DataFrame()
+
+    if income_df.empty and indicator_df.empty and daily_basic_df.empty and basic_df.empty:
+        return None, None
+
+    latest_period = None
+    if not income_df.empty and "end_date" in income_df.columns:
+        income_df = income_df.sort_values("end_date", ascending=False)
+        latest_period = str(income_df.iloc[0]["end_date"])
+    elif not indicator_df.empty and "end_date" in indicator_df.columns:
+        indicator_df = indicator_df.sort_values("end_date", ascending=False)
+        latest_period = str(indicator_df.iloc[0]["end_date"])
+
+    revenue_lookup = _build_period_lookup(income_df, "total_revenue")
+    net_profit_lookup = _build_period_lookup(income_df, "n_income_attr_p")
+    cashflow_lookup = _build_period_lookup(cashflow_df, "n_cashflow_act")
+
+    yoy_period = _find_yoy_period(sorted(revenue_lookup.keys(), reverse=True), latest_period) if latest_period else None
+    name = None
+    industry = None
+    if not basic_df.empty:
+        name = basic_df.iloc[0].get("name")
+        industry = basic_df.iloc[0].get("industry")
+
+    roe = None
+    debt_ratio = None
+    if not indicator_df.empty:
+        indicator_df = indicator_df.sort_values("end_date", ascending=False)
+        latest_indicator = indicator_df.iloc[0]
+        roe = _safe_numeric(latest_indicator.get("roe"))
+        debt_ratio = _safe_numeric(latest_indicator.get("debt_to_assets"))
+
+    revenue = revenue_lookup.get(latest_period) if latest_period else None
+    net_profit = net_profit_lookup.get(latest_period) if latest_period else None
+    operating_cash_flow = cashflow_lookup.get(latest_period) if latest_period else None
+
+    fundamental = {
+        "symbol": str(symbol).zfill(6),
+        "name": name,
+        "report_period": latest_period,
+        "revenue": revenue,
+        "revenue_yoy": _safe_growth_rate(revenue, revenue_lookup.get(yoy_period)) if latest_period and yoy_period else None,
+        "net_profit": net_profit,
+        "net_profit_yoy": _safe_growth_rate(net_profit, net_profit_lookup.get(yoy_period)) if latest_period and yoy_period else None,
+        "roe": roe,
+        "debt_ratio": debt_ratio,
+        "operating_cash_flow": operating_cash_flow,
+        "source": "tushare.pro",
+    }
+
+    latest_daily = daily_basic_df.iloc[0] if not daily_basic_df.empty else {}
+    valuation = {
+        "symbol": str(symbol).zfill(6),
+        "name": name,
+        "pe": _safe_numeric(latest_daily.get("pe")) if latest_daily is not None else None,
+        "pb": _safe_numeric(latest_daily.get("pb")) if latest_daily is not None else None,
+        "ps": _safe_numeric(latest_daily.get("ps_ttm")) if latest_daily is not None else None,
+        "dividend_yield": _safe_numeric(latest_daily.get("dv_ttm")) if latest_daily is not None else None,
+        "market_value": _safe_numeric(latest_daily.get("total_mv")) if latest_daily is not None else None,
+        "industry": industry,
+        "source": "tushare.pro",
+    }
+    return fundamental, valuation
 
 
 def _fetch_cninfo_industry_membership(symbol: str) -> dict | None:
@@ -141,82 +340,88 @@ def fetch_fundamental_snapshot(symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]
     eps_metric = "基本每股收益"
     bps_metric = "每股净资产"
 
+    fundamentals: dict | None = None
+    valuation: dict | None = None
+    latest_eps = None
+    latest_bps = None
+    akshare_error: Exception | None = None
+
     try:
         abstract_df = ak.stock_financial_abstract(symbol=symbol)
+        if abstract_df is None or abstract_df.empty or "指标" not in abstract_df.columns:
+            raise DataFetchError(f"{symbol} 基本面摘要为空或字段异常")
+
+        period_cols = _extract_latest_period_columns(abstract_df)
+        if not period_cols:
+            raise DataFetchError(f"{symbol} 基本面摘要缺少报告期列")
+
+        latest_period = period_cols[0]
+        yoy_period = _find_yoy_period(period_cols, latest_period)
+        revenue_latest = _extract_metric_value(abstract_df, revenue_metric, latest_period)
+        revenue_previous = _extract_metric_value(abstract_df, revenue_metric, yoy_period)
+        net_profit_latest = _extract_metric_value(abstract_df, net_profit_metric, latest_period)
+        net_profit_previous = _extract_metric_value(abstract_df, net_profit_metric, yoy_period)
+
+        fundamentals = {
+            "symbol": symbol,
+            "name": None,
+            "report_period": latest_period,
+            "revenue": revenue_latest,
+            "revenue_yoy": _safe_growth_rate(revenue_latest, revenue_previous),
+            "net_profit": net_profit_latest,
+            "net_profit_yoy": _safe_growth_rate(net_profit_latest, net_profit_previous),
+            "roe": _extract_metric_value(abstract_df, roe_metric, latest_period),
+            "debt_ratio": _extract_metric_value(abstract_df, debt_metric, latest_period),
+            "operating_cash_flow": _extract_metric_value(abstract_df, cash_metric, latest_period),
+            "source": "akshare.stock_financial_abstract",
+        }
+
+        latest_eps = _extract_metric_value(abstract_df, eps_metric, latest_period)
+        latest_bps = _extract_metric_value(abstract_df, bps_metric, latest_period)
+
+        valuation = {
+            "symbol": symbol,
+            "name": None,
+            "pe": None,
+            "pb": None,
+            "ps": None,
+            "dividend_yield": None,
+            "market_value": None,
+            "industry": None,
+            "source": "akshare.stock_individual_info_em",
+        }
+
+        try:
+            info_df = ak.stock_individual_info_em(symbol=symbol)
+        except Exception:
+            info_df = pd.DataFrame(columns=["item", "value"])
+
+        if not info_df.empty and {"item", "value"}.issubset(info_df.columns):
+            info_map = dict(zip(info_df["item"], info_df["value"]))
+            valuation["market_value"] = _safe_numeric(info_map.get("总市值"))
+            valuation["industry"] = info_map.get("行业")
+            fundamentals["name"] = info_map.get("股票简称")
+            valuation["name"] = info_map.get("股票简称")
     except Exception as error:
-        raise DataFetchError(f"获取 {symbol} 基本面摘要失败: {error}") from error
+        akshare_error = error
 
-    if abstract_df is None or abstract_df.empty or "指标" not in abstract_df.columns:
-        raise DataFetchError(f"{symbol} 基本面摘要为空或字段异常")
-
-    period_cols = _extract_latest_period_columns(abstract_df)
-    if not period_cols:
-        raise DataFetchError(f"{symbol} 基本面摘要缺少报告期列")
-
-    latest_period = period_cols[0]
-    yoy_period = _find_yoy_period(period_cols, latest_period)
-    revenue_latest = _extract_metric_value(abstract_df, revenue_metric, latest_period)
-    revenue_previous = _extract_metric_value(abstract_df, revenue_metric, yoy_period)
-    net_profit_latest = _extract_metric_value(abstract_df, net_profit_metric, latest_period)
-    net_profit_previous = _extract_metric_value(abstract_df, net_profit_metric, yoy_period)
-
-    fundamentals = {
-        "symbol": symbol,
-        "name": None,
-        "report_period": latest_period,
-        "revenue": revenue_latest,
-        "revenue_yoy": _safe_growth_rate(revenue_latest, revenue_previous),
-        "net_profit": net_profit_latest,
-        "net_profit_yoy": _safe_growth_rate(net_profit_latest, net_profit_previous),
-        "roe": _extract_metric_value(abstract_df, roe_metric, latest_period),
-        "debt_ratio": _extract_metric_value(abstract_df, debt_metric, latest_period),
-        "operating_cash_flow": _extract_metric_value(abstract_df, cash_metric, latest_period),
-        "source": "akshare.stock_financial_abstract",
-    }
-
-    latest_eps = _extract_metric_value(abstract_df, eps_metric, latest_period)
-    latest_bps = _extract_metric_value(abstract_df, bps_metric, latest_period)
-
-    valuation = {
-        "symbol": symbol,
-        "name": None,
-        "pe": None,
-        "pb": None,
-        "ps": None,
-        "dividend_yield": None,
-        "market_value": None,
-        "industry": None,
-        "source": "akshare.stock_individual_info_em",
-    }
-
-    try:
-        info_df = ak.stock_individual_info_em(symbol=symbol)
-    except Exception:
-        info_df = pd.DataFrame(columns=["item", "value"])
-
-    if not info_df.empty and {"item", "value"}.issubset(info_df.columns):
-        info_map = dict(zip(info_df["item"], info_df["value"]))
-        valuation["market_value"] = _safe_numeric(info_map.get("总市值"))
-        valuation["industry"] = info_map.get("行业")
-        fundamentals["name"] = info_map.get("股票简称")
-        valuation["name"] = info_map.get("股票简称")
-
-    if not valuation["industry"]:
+    if valuation and not valuation["industry"]:
         cninfo_membership = _fetch_cninfo_industry_membership(symbol)
         if cninfo_membership:
             valuation["industry"] = cninfo_membership.get("industry_name")
             valuation["source"] = cninfo_membership.get("source", valuation["source"])
-            if not valuation["name"] and cninfo_membership.get("name"):
+            if not valuation.get("name") and cninfo_membership.get("name"):
                 valuation["name"] = cninfo_membership["name"]
-            if not fundamentals["name"] and cninfo_membership.get("name"):
+            if fundamentals is not None and not fundamentals.get("name") and cninfo_membership.get("name"):
                 fundamentals["name"] = cninfo_membership["name"]
 
-    if fundamentals["name"] is None and valuation["name"] is not None:
-        fundamentals["name"] = valuation["name"]
-    if valuation["name"] is None and fundamentals["name"] is not None:
-        valuation["name"] = fundamentals["name"]
+    if fundamentals and valuation:
+        if fundamentals["name"] is None and valuation["name"] is not None:
+            fundamentals["name"] = valuation["name"]
+        if valuation["name"] is None and fundamentals["name"] is not None:
+            valuation["name"] = fundamentals["name"]
 
-    if valuation["pe"] is None or valuation["pb"] is None:
+    if valuation and (valuation["pe"] is None or valuation["pb"] is None):
         try:
             from data.akshare_loader import get_stock_data
 
@@ -234,10 +439,35 @@ def fetch_fundamental_snapshot(symbol: str) -> tuple[pd.DataFrame, pd.DataFrame]
                 if valuation["source"] == "akshare.stock_individual_info_em":
                     valuation["source"] = "derived_from_close_and_bps"
 
-    fundamental_df = pd.DataFrame([fundamentals])
-    valuation_df = pd.DataFrame([valuation])
-    fundamental_df.attrs["source"] = "akshare.stock_financial_abstract"
-    valuation_df.attrs["source"] = "akshare.stock_individual_info_em"
+    tushare_fundamental, tushare_valuation = (None, None)
+    if _needs_backup(
+        fundamentals,
+        ["report_period", "revenue", "net_profit", "roe", "debt_ratio", "operating_cash_flow"],
+    ) or _needs_backup(valuation, ["market_value", "industry"]):
+        tushare_fundamental, tushare_valuation = _fetch_tushare_fundamental_snapshot(symbol)
+
+    fundamentals = _merge_snapshot(
+        fundamentals,
+        tushare_fundamental,
+        required_fields=["name", "report_period", "revenue", "revenue_yoy", "net_profit", "net_profit_yoy", "roe", "debt_ratio", "operating_cash_flow"],
+    )
+    valuation = _merge_snapshot(
+        valuation,
+        tushare_valuation,
+        required_fields=["name", "pe", "pb", "ps", "dividend_yield", "market_value", "industry"],
+    )
+
+    if not fundamentals and not valuation:
+        if akshare_error:
+            raise DataFetchError(f"获取 {symbol} 基本面摘要失败: {akshare_error}") from akshare_error
+        raise DataFetchError(f"{symbol} 基本面与估值快照均不可用")
+
+    fundamental_df = pd.DataFrame([fundamentals]) if fundamentals else pd.DataFrame()
+    valuation_df = pd.DataFrame([valuation]) if valuation else pd.DataFrame()
+    if not fundamental_df.empty:
+        fundamental_df.attrs["source"] = fundamentals.get("source", "unknown")
+    if not valuation_df.empty:
+        valuation_df.attrs["source"] = valuation.get("source", "unknown")
     return fundamental_df, valuation_df
 
 

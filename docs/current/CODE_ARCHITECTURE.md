@@ -36,6 +36,20 @@
   - 所有主链信息汇总后的最终推荐级别
 - 最终结论依据（`final_decision_basis`）：
   - 对最终推荐结论的简要归因说明
+- 研究流程摘要（`research_workflow_summary`）：
+  - 结构化输出投资逻辑、看多依据、反方证据、跟踪指标和失效条件
+- 风险委员会摘要（`risk_committee_summary`）：
+  - 结构化输出趋势、基本面、事件、行业/组合的风险裁决结果
+- 股票评估框架摘要（`evaluation_framework_summary`）：
+  - 把技术、基本面、情绪、事件、行业、风险重组为统一评估框架
+- 数据来源摘要（`data_source_summary`）：
+  - 结构化展示每个分析环节当前实际使用的数据来源、缓存策略和降级路径
+- 目标价情景（`target_price_scenarios`）：
+  - 把目标价拆成保守、基准、乐观三档情景
+- 执行计划摘要（`execution_plan_summary`）：
+  - 把研究结论转成交易动作、仓位、止损止盈、执行置信度和执行风险分
+- 实时新闻摘要（`news_summary`）：
+  - 把新闻倾向、新闻评分、重点新闻和结论组织成独立解释层
 
 ## 当前架构
 
@@ -48,12 +62,16 @@
   - [akshare_loader.py](../data/akshare_loader.py)
   - [fundamental_loader.py](../data/fundamental_loader.py)
   - [events_loader.py](../data/events_loader.py)
+  - [news_loader.py](../data/news_loader.py)
   - [sentiment_loader.py](../data/sentiment_loader.py)
+  - [source_registry.py](../data/source_registry.py)
 - 当前状态：
   - 行情数据链路最完整
-  - 基本面数据已进入统一分析主链
+  - 基本面数据已进入统一分析主链，并开始采用 `AKShare 主源 + Tushare 备源`
   - 事件驱动已接入公告、业绩预告、财报预约披露三类数据
+  - 实时新闻层第一版已接入，当前使用 `akshare.stock_news_em + SQLite 新闻快照`
   - 行业同行样本链路已建好，并支持主表、历史表和回退抓取
+  - 新增统一数据来源矩阵，开始显式化“主来源 - 缓存 - 降级”路径
   - 市场情绪依赖外部接口，失败时会回退为中性
 
 ### 2. 存储层
@@ -69,6 +87,7 @@
   - 基本面快照
   - 估值快照
   - 公司事件
+  - 实时新闻快照
   - 市场情绪快照
   - 行业归属
   - 行业归属历史快照
@@ -89,6 +108,9 @@
   - 行业横向比较评分（`industry_comparison_score`）
   - 最终推荐结论（`recommendation`）
   - 最终结论依据（`final_decision_basis`）
+  - 研究流程摘要（`research_workflow_summary`）
+  - 风险委员会摘要（`risk_committee_summary`）
+  - 实时新闻摘要（`news_summary`）
   - `comparison_results`
 
 ### 4. 对比插件层
@@ -106,6 +128,7 @@
   - `industry_peers`
   - `industry_valuation`
   - `industry_growth`
+  - `industry_heat`
 
 ### 5. 统一评分层
 
@@ -128,6 +151,13 @@
   - `sentiment`
   - `event`
   - `industry`
+  - `execution`
+- 当前组合约束组件：
+  - `max_position_weight`
+  - `max_industry_positions`
+  - `min_turnover_amount`
+  - `min_execution_confidence`
+  - `max_execution_risk_score`
 - 当前缓存支撑：
   - 新增 `Utils/cache_manager.py`，利用 `.cache` 文件夹持久化 `catalog`、`accumulation`、`growth` 结果，页面会在后台刷新这些快照以保持热数据
 
@@ -141,6 +171,8 @@
   - [strategy_optimizer.py](../portfolio/strategy_optimizer.py)
 - 当前规则：
   - 所有在用策略入口都应围绕统一评分配置工作
+  - 组合推荐与回测调仓已开始在选股阶段应用最小风险约束
+  - 执行层字段已进入候选排序、组合排序与回测调仓记录
 
 ### 7. 工作流层
 
@@ -152,6 +184,7 @@
   - [watchlist.py](../portfolio/watchlist.py)
   - [paper_trading.py](../portfolio/paper_trading.py)
   - [automation_workflows.py](../portfolio/automation_workflows.py)
+  - [task_manager.py](../web/task_manager.py)
 
 ### 8. 页面层
 
@@ -159,6 +192,9 @@
   - 展示分析、筛选、自选股、优化、解释和调试视图
 - 主要文件：
   - [app.py](../web/app.py)
+  - [analysis.py](../web/panels/analysis.py)
+  - [workflow.py](../web/panels/workflow.py)
+  - [docs_admin.py](../web/panels/docs_admin.py)
 - 当前页面入口：
   - 策略总览
   - 单股分析
@@ -167,15 +203,33 @@
   - 分析方案
   - 策略进化
   - Docs 看板
+- 策略总览当前新增：
+  - `投研工作台首页`
+  - 用于先看后台任务、最近更新和当前组合暴露摘要
 - Docs 看板作用：
   - 聚合展示 `docs/` 中的最近改动、专业化方向、问题清单和文档原文
   - 作为网页端查看文档体系的总入口
 - 当前问题：
-  - 文件仍然过大
+  - `web/app.py` 虽已开始模块化拆分，但主文件仍然偏大
   - 页面逻辑和业务逻辑耦合偏重
   - 后续应拆成页面模块和共享组件
 
 ## 当前架构判断
+
+## 外部项目借鉴策略
+
+- 当前对 `TradingAgents-CN` 的吸收原则不是“整体替换”，而是“拆能力、保主链、分阶段内化”。
+- 当前明确保留的底座：
+  - `single_stock_analysis -> candidate_screener -> unified_selection -> portfolio_backtester`
+  - `Streamlit + docs` 入口体系
+- 当前已开始内化的能力：
+  - 研究流程摘要
+  - 风险委员会摘要
+  - 后台任务与结果恢复
+  - 页面模块化拆分
+- 当前明确不做：
+  - 直接迁移到 `FastAPI + Vue + MongoDB + Redis`
+  - 直接复制完整 `TradingAgentsGraph / StateGraph` 多智能体主干
 
 ### 优点
 

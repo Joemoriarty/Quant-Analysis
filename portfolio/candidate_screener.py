@@ -41,6 +41,16 @@ def _build_event_view(event_score: int, event_state: str) -> str:
     return "近期事件整体中性，更多作为辅助解释"
 
 
+def _build_execution_view(summary: dict) -> tuple[float, str, str, str]:
+    confidence = float(summary.get("execution_confidence", 0) or 0)
+    risk_score = float(summary.get("execution_risk_score", 0) or 0)
+    adjusted_action = str(summary.get("risk_adjusted_action") or "-")
+    target_price_range = str(summary.get("target_price_range") or "-")
+    position_guidance = str(summary.get("position_guidance") or "-")
+    execution_score = max(0.0, min(100.0, confidence * 0.7 + (100.0 - risk_score) * 0.3))
+    return execution_score, adjusted_action, target_price_range, position_guidance
+
+
 def _screen_one_consistent_candidate(row: pd.Series, config: dict) -> dict | None:
     symbol = str(row["code"]).zfill(6)
     name = str(row.get("name", symbol))
@@ -67,6 +77,8 @@ def _screen_one_consistent_candidate(row: pd.Series, config: dict) -> dict | Non
     weights = config["weights"]
     recommendation_bonus = config["recommendation_bonus"]
     effective_industry_score = 50 if industry_score is None else industry_score
+    execution_summary = analysis.get("execution_plan_summary") or {}
+    execution_score, adjusted_action, target_price_range, position_guidance = _build_execution_view(execution_summary)
     final_score = round(
         analysis["trend_score"] * weights["trend"]
         + analysis["fundamental_score"] * weights["fundamental"]
@@ -74,6 +86,7 @@ def _screen_one_consistent_candidate(row: pd.Series, config: dict) -> dict | Non
         + analysis["market_sentiment_score"] * weights["sentiment"]
         + effective_industry_score * weights["industry"]
         + analysis["event_score"] * weights["event"]
+        + execution_score * weights["execution"]
         + recommendation_bonus.get(analysis["recommendation"], 0),
         2,
     )
@@ -89,11 +102,25 @@ def _screen_one_consistent_candidate(row: pd.Series, config: dict) -> dict | Non
         "基本面评分": analysis["fundamental_score"],
         "行业横向分": industry_score,
         "行业比较结论": analysis.get("industry_comparison_conclusion"),
+        "行业景气热度分": next(
+            (
+                item.get("score")
+                for item in analysis.get("comparison_results", [])
+                if item.get("name") == "industry_heat" and item.get("available")
+            ),
+            None,
+        ),
         "市场情绪": analysis["market_sentiment_state"],
         "市场情绪得分": analysis["market_sentiment_score"],
         "事件面": analysis["event_state"],
         "事件驱动分": analysis["event_score"],
         "量价吸筹评分": analysis["accumulation_score"],
+        "执行置信度": execution_summary.get("execution_confidence"),
+        "执行风险分": execution_summary.get("execution_risk_score"),
+        "执行得分": round(execution_score, 2),
+        "风险修正动作": adjusted_action,
+        "建议目标仓位": position_guidance,
+        "目标价区间": target_price_range,
         "20日动量": metrics["return_20d"],
         "量比": metrics["volume_ratio_10d"],
         "价值判断": _build_value_view(analysis["fundamental_score"], industry_score),
@@ -129,9 +156,16 @@ def screen_accumulation_candidates(scan_limit: int = 500, top_k: int = 20, confi
                 "趋势评分",
                 "基本面评分",
                 "行业横向分",
+                "行业景气热度分",
                 "市场情绪",
                 "事件面",
                 "事件驱动分",
+                "执行置信度",
+                "执行风险分",
+                "执行得分",
+                "风险修正动作",
+                "建议目标仓位",
+                "目标价区间",
                 "量价吸筹评分",
                 "20日动量",
                 "量比",
@@ -144,8 +178,8 @@ def screen_accumulation_candidates(scan_limit: int = 500, top_k: int = 20, confi
     result_df = pd.DataFrame(results)
     result_df["recommendation_rank"] = result_df["最终结论"].map(_recommendation_rank)
     result_df = result_df.sort_values(
-        by=["recommendation_rank", "综合评分", "量价吸筹评分", "趋势评分", "行业横向分"],
-        ascending=[True, False, False, False, False],
+        by=["recommendation_rank", "综合评分", "执行置信度", "执行风险分", "量价吸筹评分", "趋势评分", "行业横向分"],
+        ascending=[True, False, False, True, False, False, False],
     ).drop(columns=["recommendation_rank", "市场情绪得分"])
     return result_df.head(top_k).reset_index(drop=True)
 
@@ -180,6 +214,7 @@ def recommend_growth_candidates(
                 + item["市场情绪得分"] * config["weights"]["sentiment"]
                 + effective_industry_score * config["weights"]["industry"]
                 + item["事件驱动分"] * config["weights"]["event"]
+                + item["执行得分"] * config["weights"]["execution"]
                 + min(item["20日动量"] * 100, 20)
                 + config["recommendation_bonus"].get(item["最终结论"], 0)
             )
@@ -202,9 +237,16 @@ def recommend_growth_candidates(
                 "趋势评分",
                 "基本面评分",
                 "行业横向分",
+                "行业景气热度分",
                 "市场情绪",
                 "事件面",
                 "事件驱动分",
+                "执行置信度",
+                "执行风险分",
+                "执行得分",
+                "风险修正动作",
+                "建议目标仓位",
+                "目标价区间",
                 "量价吸筹评分",
                 "20日动量",
                 "量比",
@@ -217,7 +259,7 @@ def recommend_growth_candidates(
     result_df = pd.DataFrame(results)
     result_df["recommendation_rank"] = result_df["最终结论"].map(_recommendation_rank)
     result_df = result_df.sort_values(
-        by=["recommendation_rank", "潜力评分", "基本面评分", "行业横向分", "趋势评分"],
-        ascending=[True, False, False, False, False],
+        by=["recommendation_rank", "潜力评分", "执行置信度", "执行风险分", "基本面评分", "行业横向分", "趋势评分"],
+        ascending=[True, False, False, True, False, False, False],
     ).drop(columns=["recommendation_rank", "市场情绪得分", "综合评分", "结论依据"])
     return result_df.head(top_k).reset_index(drop=True)

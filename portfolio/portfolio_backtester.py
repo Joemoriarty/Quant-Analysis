@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 
 from data.akshare_loader import DataFetchError, get_stock_data
+from strategies.unified_selection import apply_portfolio_constraints
 
 
 class BacktestError(RuntimeError):
@@ -153,7 +154,10 @@ def _add_display_columns(
         lambda row: _build_action_suggestion(int(row["rank"]), top_n, float(row["score"])),
         axis=1,
     )
-    table["weight"] = 1 / len(table) if len(table) else 0.0
+    if "position_weight" in table.columns:
+        table["weight"] = table["position_weight"]
+    else:
+        table["weight"] = 1 / len(table) if len(table) else 0.0
     return table
 
 
@@ -188,12 +192,19 @@ def _build_current_recommendation(data, latest_date, strategy_func, top_n, symbo
     if score_df.empty:
         return {"as_of_date": latest_date, "weights": weights, "table": empty_table}
 
-    table = (
-        score_df.dropna(subset=["symbol", "score"])
-        .sort_values("score", ascending=False)
-        .head(top_n)
-        .reset_index(drop=True)
-    )
+    candidate_df = score_df.dropna(subset=["symbol", "score"]).sort_values("score", ascending=False).reset_index(drop=True)
+    table, risk_summary = apply_portfolio_constraints(candidate_df, top_n=top_n)
+    if table.empty:
+        table = candidate_df.head(top_n).reset_index(drop=True)
+        risk_summary = {
+            "selected_count": 0,
+            "skipped_low_liquidity": 0,
+            "skipped_industry_cap": 0,
+            "industry_exposure": {},
+            "max_position_weight": 0.0,
+            "min_turnover_amount": 0.0,
+            "max_industry_positions": 0,
+        }
     table = _add_display_columns(table, symbol_names, top_n, latest_prices)
 
     columns = ["symbol", "name", "display_name", "score", "reason", "action", "weight", "close_price"]
@@ -201,6 +212,7 @@ def _build_current_recommendation(data, latest_date, strategy_func, top_n, symbo
     return {
         "as_of_date": latest_date,
         "weights": weights,
+        "risk_summary": risk_summary,
         "table": table[columns + extra_columns],
     }
 
@@ -266,7 +278,11 @@ def backtest_portfolio_realistic(
             diagnostics.append({"date": date, "message": "策略打分均为空，已跳过。"})
             continue
 
-        selected_df = score_df.sort_values("score", ascending=False).head(top_n).copy()
+        candidate_df = score_df.sort_values("score", ascending=False).reset_index(drop=True)
+        selected_df, risk_summary = apply_portfolio_constraints(candidate_df, top_n=top_n)
+        if selected_df.empty:
+            diagnostics.append({"date": date, "message": "风险约束后没有可用股票，已跳过。"})
+            continue
         selected = selected_df["symbol"].tolist()
         if not selected:
             diagnostics.append({"date": date, "message": "本次调仓未选出股票，已跳过。"})
@@ -274,7 +290,10 @@ def backtest_portfolio_realistic(
 
         selected_df = _add_display_columns(selected_df, symbol_names, top_n, latest_prices)
 
-        new_hold = {symbol: 1 / len(selected) for symbol in selected}
+        new_hold = {
+            symbol: float(weight)
+            for symbol, weight in zip(selected_df["symbol"], selected_df["weight"])
+        }
         returns = []
 
         future_idx = i + rebalance_days
@@ -334,6 +353,7 @@ def backtest_portfolio_realistic(
                 ),
                 "selected_count": len(selected),
                 "strategy_weights": weights,
+                "risk_summary": risk_summary,
                 "selected_detail": selected_df.to_dict("records"),
                 "realized_positions": realized_positions,
             }

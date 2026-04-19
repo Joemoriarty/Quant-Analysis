@@ -162,6 +162,23 @@ def init_db() -> Path:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS stock_news_items (
+                news_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                name TEXT,
+                publish_time TEXT,
+                title TEXT NOT NULL,
+                summary TEXT,
+                content TEXT,
+                source TEXT,
+                url TEXT,
+                sentiment TEXT,
+                sentiment_score REAL,
+                importance INTEGER DEFAULT 0,
+                raw_json TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS market_sentiment_snapshots (
                 snapshot_time TEXT PRIMARY KEY,
                 up_count INTEGER,
@@ -224,6 +241,9 @@ def init_db() -> Path:
 
             CREATE INDEX IF NOT EXISTS idx_company_events_symbol_date
             ON company_events(symbol, event_date DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_stock_news_symbol_time
+            ON stock_news_items(symbol, publish_time DESC, news_id DESC);
 
             CREATE INDEX IF NOT EXISTS idx_sentiment_state_time
             ON market_sentiment_snapshots(market_state, snapshot_time DESC);
@@ -563,6 +583,66 @@ def save_price_history(symbol: str, df: pd.DataFrame) -> int:
             """,
             rows,
         )
+    return len(rows)
+
+
+def save_stock_news_items(symbol: str, news_items: list[dict], replace_from_time: str | None = None) -> int:
+    init_db()
+    symbol = str(symbol).zfill(6)
+    rows = []
+    for item in news_items or []:
+        rows.append(
+            (
+                symbol,
+                item.get("name"),
+                item.get("publish_time"),
+                item.get("title"),
+                item.get("summary"),
+                item.get("content"),
+                item.get("source"),
+                item.get("url"),
+                item.get("sentiment"),
+                item.get("sentiment_score"),
+                int(pd.to_numeric(item.get("importance"), errors="coerce") or 0),
+                json.dumps(
+                    {
+                        key: value
+                        for key, value in item.items()
+                        if key
+                        not in {
+                            "name",
+                            "publish_time",
+                            "title",
+                            "summary",
+                            "content",
+                            "source",
+                            "url",
+                            "sentiment",
+                            "sentiment_score",
+                            "importance",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+
+    with _connect() as conn:
+        if replace_from_time:
+            conn.execute(
+                "DELETE FROM stock_news_items WHERE symbol = ? AND publish_time >= ?",
+                (symbol, str(replace_from_time)),
+            )
+        if rows:
+            conn.executemany(
+                """
+                INSERT INTO stock_news_items (
+                    symbol, name, publish_time, title, summary, content, source, url,
+                    sentiment, sentiment_score, importance, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
     return len(rows)
 
 
@@ -1075,6 +1155,51 @@ def get_recent_company_events(symbol: str, lookback_days: int = 30, limit: int =
                 "importance": row[7],
                 "source": row[8],
                 "created_at": row[10],
+                **raw,
+            }
+        )
+    return results
+
+
+def get_recent_stock_news(symbol: str, lookback_hours: int = 72, limit: int = 20) -> list[dict]:
+    init_db()
+    since_time = (pd.Timestamp.now() - pd.Timedelta(hours=max(int(lookback_hours), 1))).isoformat()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT news_id, symbol, name, publish_time, title, summary, content, source, url,
+                   sentiment, sentiment_score, importance, raw_json, created_at
+            FROM stock_news_items
+            WHERE symbol = ? AND publish_time >= ?
+            ORDER BY publish_time DESC, importance DESC, news_id DESC
+            LIMIT ?
+            """,
+            (str(symbol).zfill(6), since_time, int(limit)),
+        ).fetchall()
+
+    results: list[dict] = []
+    for row in rows:
+        raw = {}
+        if row[12]:
+            try:
+                raw = json.loads(row[12])
+            except json.JSONDecodeError:
+                raw = {}
+        results.append(
+            {
+                "news_id": row[0],
+                "symbol": row[1],
+                "name": row[2],
+                "publish_time": row[3],
+                "title": row[4],
+                "summary": row[5],
+                "content": row[6],
+                "source": row[7],
+                "url": row[8],
+                "sentiment": row[9],
+                "sentiment_score": row[10],
+                "importance": row[11],
+                "created_at": row[13],
                 **raw,
             }
         )

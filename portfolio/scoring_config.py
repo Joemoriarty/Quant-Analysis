@@ -16,12 +16,13 @@ RECOMMENDATION_ORDER = [
 
 DEFAULT_SCORING_CONFIG = {
     "weights": {
-        "trend": 0.26,
-        "fundamental": 0.22,
-        "accumulation": 0.16,
-        "sentiment": 0.10,
-        "industry": 0.13,
-        "event": 0.13,
+        "trend": 0.22,
+        "fundamental": 0.20,
+        "accumulation": 0.14,
+        "sentiment": 0.09,
+        "industry": 0.11,
+        "event": 0.10,
+        "execution": 0.14,
     },
     "thresholds": {
         "min_recommendation": RECOMMENDATION_WATCH,
@@ -37,6 +38,13 @@ DEFAULT_SCORING_CONFIG = {
         RECOMMENDATION_WATCH: 0,
         RECOMMENDATION_AVOID: -12,
     },
+    "portfolio_constraints": {
+        "max_position_weight": 0.18,
+        "max_industry_positions": 2,
+        "min_turnover_amount": 20_000_000,
+        "min_execution_confidence": 45,
+        "max_execution_risk_score": 78,
+    },
 }
 
 
@@ -44,13 +52,13 @@ def normalize_scoring_config(config: dict | None = None) -> dict:
     base = json.loads(json.dumps(DEFAULT_SCORING_CONFIG))
     config = config or {}
 
-    for group in ["weights", "thresholds", "recommendation_bonus"]:
+    for group in ["weights", "thresholds", "recommendation_bonus", "portfolio_constraints"]:
         incoming = config.get(group) or {}
         if isinstance(incoming, dict):
             base[group].update(incoming)
 
     weights = base["weights"]
-    weight_keys = ["trend", "fundamental", "accumulation", "sentiment", "industry", "event"]
+    weight_keys = ["trend", "fundamental", "accumulation", "sentiment", "industry", "event", "execution"]
     total = sum(float(weights.get(key, 0.0)) for key in weight_keys)
     if total <= 0:
         total = 1.0
@@ -73,6 +81,13 @@ def normalize_scoring_config(config: dict | None = None) -> dict:
     bonus = base["recommendation_bonus"]
     for key in RECOMMENDATION_ORDER:
         bonus[key] = int(bonus.get(key, 0))
+
+    constraints = base["portfolio_constraints"]
+    constraints["max_position_weight"] = float(constraints.get("max_position_weight", 0.18))
+    constraints["max_industry_positions"] = max(1, int(constraints.get("max_industry_positions", 2)))
+    constraints["min_turnover_amount"] = max(0.0, float(constraints.get("min_turnover_amount", 20_000_000)))
+    constraints["min_execution_confidence"] = max(0, min(100, int(constraints.get("min_execution_confidence", 45))))
+    constraints["max_execution_risk_score"] = max(0, min(100, int(constraints.get("max_execution_risk_score", 78))))
 
     return base
 

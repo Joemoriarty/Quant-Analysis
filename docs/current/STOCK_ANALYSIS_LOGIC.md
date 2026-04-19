@@ -31,6 +31,10 @@
   - 汇总技术面、基本面、市场情绪、事件驱动、行业横向比较后给出的最终结论
 - 最终结论依据（`final_decision_basis`）：
   - 对“为什么得到这个最终结论”的一句话总结
+- 研究流程摘要（`research_workflow_summary`）：
+  - 把投资逻辑、看多依据、反方依据、跟踪指标和失效条件组织成结构化研究对象
+- 风险委员会摘要（`risk_committee_summary`）：
+  - 把趋势、基本面、事件、行业/组合风险拆成结构化风险裁决结果
 
 ## 版本历史
 
@@ -85,9 +89,71 @@
 - 页面端把“主力吸筹 / 吸筹候选”统一调整为“量价代理信号 / 量价代理候选”的口径。
 - `accumulation_score` 明确解释为量价共振代理分，不再暗示系统已经完成真实主力席位识别。
 
+### v0.9.0
+- 单股分析新增 `research_workflow_summary / risk_committee_summary`。
+- 单股页新增结构化研究区块，用统一口径展示投资逻辑、看多依据、看空依据、跟踪指标和失效条件。
+- 候选扫描、数据同步和参数优化开始支持后台任务与结果恢复。
+
+### v0.9.1
+- 策略总览新增“投研工作台首页”，优先展示后台任务、候选暴露和最近更新。
+- 组合选股与回测开始接入最小风险约束：
+  - 最大单票权重
+  - 单行业最多持仓数
+  - 最低成交额估算
+
+### v0.9.2
+- 单股分析新增 `evaluation_framework_summary / data_source_summary`。
+- 单股页新增“股票评估框架摘要”和“数据来源与降级路径”。
+- 借鉴 `TradingAgents-CN` 的 analyst 分维思路与统一数据源治理思路，但当前仍保持本项目自己的推荐内核不变。
+
+### v0.9.3
+- 单股分析新增 `target_price_scenarios / execution_plan_summary`。
+- 单股页新增：
+  - 执行计划摘要
+  - 目标价情景
+- 借鉴 `TradingAgents-CN` 的 `research_manager / trader / signal_processing / risk_manager` 思路，把研究结论进一步下沉为可执行动作。
+- 当前仍不引入多 agent 编排，而是采用规则化交易判定层。
+
+### v0.9.4
+- 单股分析新增 `news_items / news_summary`。
+- 单股页新增“实时新闻摘要”，用于补足事件面之外的短期新闻流。
+- 当前实时新闻层使用 `akshare.stock_news_em + SQLite 新闻快照`，抓取失败时回退最近缓存。
+- 当前实时新闻只作为独立解释层和数据源治理增强，不单独改变最终推荐内核。
+
+### v0.9.5
+- 基本面与估值层新增 `AKShare 主源 + Tushare 备源` 的主备降级。
+- 当前默认仍以 `AKShare` 为主；只有在主源失败或缺少关键字段时，才使用 `Tushare` 补缺。
+- 当前这一步主要增强基本面快照的稳健性，不新增平行推荐主链。
+
+### v0.9.6
+- 行业横向比较新增 `industry_heat` 子模块。
+- 行业横向总分现在由：
+  - 行业质量比较
+  - 行业估值分位
+  - 行业增长性比较
+  - 行业景气与板块热度
+  共同汇总。
+- 当前这一步主要增强行业比较层的景气解释力。
+
+### v0.9.7
+- 执行层已正式下沉到：
+  - 量价代理候选
+  - 中线候选
+  - 组合选股
+  - 回测调仓记录
+- 候选与组合开始使用：
+  - `execution_confidence`
+  - `execution_risk_score`
+  - `execution_score`
+  - `risk_adjusted_action`
+  - `target_price_range`
+- 组合约束新增：
+  - `min_execution_confidence`
+  - `max_execution_risk_score`
+
 ## 当前版本
 
-### v0.8.1
+### v0.9.7
 
 状态：当前线上逻辑
 
@@ -110,6 +176,13 @@
 5. 行业横向比较评分（`industry_comparison_score`）
 6. 最终推荐结论（`recommendation`）
 7. 最终结论依据（`final_decision_basis`）
+8. 研究流程摘要（`research_workflow_summary`）
+9. 风险委员会摘要（`risk_committee_summary`）
+10. 股票评估框架摘要（`evaluation_framework_summary`）
+11. 数据来源摘要（`data_source_summary`）
+12. 目标价情景（`target_price_scenarios`）
+13. 执行计划摘要（`execution_plan_summary`）
+14. 实时新闻摘要（`news_summary`）
 
 ## 当前候选筛选规则
 
@@ -131,8 +204,35 @@
 5. 再读取事件驱动评分（`event_score`）
 6. 再读取行业横向比较评分（`industry_comparison_score`）
 7. 再读取 `accumulation_score`
+8. 再读取执行层字段（`execution_confidence / execution_risk_score / risk_adjusted_action`）
 
 也就是说，候选池不再额外维护一套和单股页不同的判断口径。
+
+## 当前组合风险约束
+
+当前组合层已经开始接入最小风险约束，但这还不是完整的机构级组合风控。
+
+当前已启用的约束：
+
+1. 最大单票权重（`max_position_weight`）
+2. 单行业最多持仓数（`max_industry_positions`）
+3. 最低成交额估算（`min_turnover_amount`）
+4. 最低执行置信度（`min_execution_confidence`）
+5. 最高执行风险分（`max_execution_risk_score`）
+
+当前作用位置：
+
+1. 当前候选推荐（`current_pick`）
+2. 回测调仓选股
+3. 分析方案页参数配置
+
+当前仍未覆盖：
+
+1. 行业权重上限
+2. 组合相关性矩阵
+3. 风格暴露
+4. Beta 暴露
+5. 回撤触发降仓
 
 ## 技术面依据
 

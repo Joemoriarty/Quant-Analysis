@@ -21,6 +21,8 @@ docs/
 │   ├── FIELD_GLOSSARY.md
 │   ├── STOCK_ANALYSIS_LOGIC.md
 │   ├── CODE_ARCHITECTURE.md
+│   ├── TRADINGAGENTS_CN_REFERENCE_PLAN.md
+│   ├── TRADINGAGENTS_CN_OPTIMIZATION_PLAN.md
 │   ├── PROFESSIONALIZATION_TRACKER.md
 │   └── PRIVATE_FUND_GAP_BACKLOG.md
 ├── history/
@@ -51,6 +53,10 @@ docs/
   - 去 `docs/current/FIELD_GLOSSARY.md`
 - 想看“现在怎么组织”：
   - 去 `docs/current/CODE_ARCHITECTURE.md`
+- 想看“TradingAgents-CN 有哪些值得借鉴、当前准备怎么吸收”：
+  - 去 `docs/current/TRADINGAGENTS_CN_REFERENCE_PLAN.md`
+- 想看“TradingAgents-CN 后面准备怎么继续优化、当前执行到哪一步”：
+  - 去 `docs/current/TRADINGAGENTS_CN_OPTIMIZATION_PLAN.md`
 - 想看“能力建设做到哪一步”：
   - 去 `docs/current/PROFESSIONALIZATION_TRACKER.md`
 - 想看“私募视角下还差什么”：
@@ -91,6 +97,11 @@ docs/
 | 行业横向比较评分 | `industry_comparison_score` | 行业横向比较评分（`industry_comparison_score`） |
 | 最终推荐结论 | `recommendation` | 最终推荐结论（`recommendation`） |
 | 最终结论依据 | `final_decision_basis` | 最终结论依据（`final_decision_basis`） |
+| 股票评估框架摘要 | `evaluation_framework_summary` | 股票评估框架摘要（`evaluation_framework_summary`） |
+| 数据来源摘要 | `data_source_summary` | 数据来源摘要（`data_source_summary`） |
+| 实时新闻摘要 | `news_summary` | 实时新闻摘要（`news_summary`） |
+| 目标价情景 | `target_price_scenarios` | 目标价情景（`target_price_scenarios`） |
+| 执行计划摘要 | `execution_plan_summary` | 执行计划摘要（`execution_plan_summary`） |
 
 补充理解：
 - “结论”通常是离散判断，例如 `推荐关注 / 中性观察 / 暂不推荐`
@@ -152,9 +163,31 @@ docs/
   - 想做产品化、机构化升级
   - 想补“为什么机构现在还不会完全信这套系统”
 
-### 6. [RELEASE_NOTES.md](./history/RELEASE_NOTES.md)
+### 6. [TRADINGAGENTS_CN_REFERENCE_PLAN.md](./current/TRADINGAGENTS_CN_REFERENCE_PLAN.md)
 
-### 7. [DOC_UPDATE_TEMPLATES.md](./templates/DOC_UPDATE_TEMPLATES.md)
+- 回答的问题：
+  - `TradingAgents-CN` 哪些能力值得借
+  - 哪些部分不应该直接照搬
+  - 这些借鉴点如何映射回当前 backlog 和阶段路线
+- 适合什么时候看：
+  - 想做外部项目借鉴
+  - 想给当前系统排下一阶段技术与产品改造优先级
+  - 想确认“继续现项目”路线下该怎么逐步吸收外部能力
+
+### 7. [TRADINGAGENTS_CN_OPTIMIZATION_PLAN.md](./current/TRADINGAGENTS_CN_OPTIMIZATION_PLAN.md)
+
+- 回答的问题：
+  - 后续准备按什么步骤继续优化
+  - 当前已经执行到哪一步
+  - 每一步完成后应该如何回写状态
+- 适合什么时候看：
+  - 想看 TradingAgents-CN 路线的后续执行计划
+  - 想确认接下来应该先做哪一步
+  - 想在每次推进后同步更新计划状态
+
+### 8. [RELEASE_NOTES.md](./history/RELEASE_NOTES.md)
+
+### 9. [DOC_UPDATE_TEMPLATES.md](./templates/DOC_UPDATE_TEMPLATES.md)
 
 - 回答的问题：
   - 每类文档应该按什么模板更新
@@ -182,9 +215,11 @@ docs/
 1. 先看 [README.md](./README.md)
 2. 再看 [PROFESSIONALIZATION_TRACKER.md](./current/PROFESSIONALIZATION_TRACKER.md)
 3. 再看 [PRIVATE_FUND_GAP_BACKLOG.md](./current/PRIVATE_FUND_GAP_BACKLOG.md)
-4. 再看 [FIELD_GLOSSARY.md](./current/FIELD_GLOSSARY.md)
-5. 再看 [STOCK_ANALYSIS_LOGIC.md](./current/STOCK_ANALYSIS_LOGIC.md)
-6. 最后按需看 [CODE_ARCHITECTURE.md](./current/CODE_ARCHITECTURE.md)
+4. 再看 [TRADINGAGENTS_CN_REFERENCE_PLAN.md](./current/TRADINGAGENTS_CN_REFERENCE_PLAN.md)
+5. 再看 [TRADINGAGENTS_CN_OPTIMIZATION_PLAN.md](./current/TRADINGAGENTS_CN_OPTIMIZATION_PLAN.md)
+6. 再看 [FIELD_GLOSSARY.md](./current/FIELD_GLOSSARY.md)
+7. 再看 [STOCK_ANALYSIS_LOGIC.md](./current/STOCK_ANALYSIS_LOGIC.md)
+8. 最后按需看 [CODE_ARCHITECTURE.md](./current/CODE_ARCHITECTURE.md)
 
 ### 场景 2：想改股票判断逻辑
 
@@ -280,6 +315,16 @@ docs/
   - [STOCK_ANALYSIS_LOGIC.md](./current/STOCK_ANALYSIS_LOGIC.md)
   - [CODE_ARCHITECTURE.md](./current/CODE_ARCHITECTURE.md)
   - [PROFESSIONALIZATION_TRACKER.md](./current/PROFESSIONALIZATION_TRACKER.md)
+
+#### 6. 新增外部项目借鉴或路线规划
+
+- 必须更新：
+  - [TRADINGAGENTS_CN_REFERENCE_PLAN.md](./current/TRADINGAGENTS_CN_REFERENCE_PLAN.md)
+  - [RELEASE_NOTES.md](./history/RELEASE_NOTES.md)
+- 视情况更新：
+  - [PRIVATE_FUND_GAP_BACKLOG.md](./current/PRIVATE_FUND_GAP_BACKLOG.md)
+  - [PROFESSIONALIZATION_TRACKER.md](./current/PROFESSIONALIZATION_TRACKER.md)
+  - [CODE_ARCHITECTURE.md](./current/CODE_ARCHITECTURE.md)
 
 ---
 

@@ -8,6 +8,8 @@ import pandas as pd
 from data.akshare_loader import DataFetchError, get_stock_catalog, get_stock_data, get_stock_lookup
 from data.events_loader import load_or_fetch_company_events
 from data.fundamental_loader import load_or_fetch_fundamental_snapshot, resolve_industry_membership
+from data.news_loader import load_or_fetch_realtime_stock_news
+from data.source_registry import build_analysis_data_source_summary
 from data.sentiment_loader import load_or_fetch_market_sentiment_snapshot
 from portfolio.comparison_plugins import build_comparison_results
 
@@ -155,8 +157,8 @@ def _build_fundamental_summary(fundamental: dict | None, valuation: dict | None)
         "positive_flags": positive_flags,
         "risk_flags": risk_flags,
         "source": {
-            "fundamental": fundamental.get("source"),
-            "valuation": valuation.get("source"),
+            "fundamental": fundamental.get("source_chain") or fundamental.get("source"),
+            "valuation": valuation.get("source_chain") or valuation.get("source"),
         },
     }
 
@@ -380,6 +382,89 @@ def _build_event_summary(events: list[dict] | None) -> tuple[dict, list[str], li
     if not risks:
         risks.append("近期未出现显著风险事件，事件层不做额外下调")
 
+    return summary, explanations, risks
+
+
+def _build_news_summary(news_items: list[dict] | None) -> tuple[dict, list[str], list[str]]:
+    if not news_items:
+        return (
+            {
+                "available": False,
+                "headline": "当前没有可用的实时新闻数据",
+                "state": "中性",
+                "score": 50,
+                "items": [],
+                "conclusion": "当前没有检索到近期实时新闻，本次不对结论做额外新闻校正。",
+                "high_importance_count": 0,
+                "positive_flags": [],
+                "risk_flags": ["缺少近期实时新闻，无法判断短期舆情和催化变化。"],
+            },
+            ["缺少实时新闻，本次不做新闻层加减分"],
+            ["当前无法确认是否存在短期新闻扰动或突发催化"],
+        )
+
+    score = 50.0
+    items: list[dict] = []
+    positive_flags: list[str] = []
+    risk_flags: list[str] = []
+    high_importance_count = 0
+
+    for item in news_items[:10]:
+        sentiment = str(item.get("sentiment") or "neutral")
+        importance = _safe_int(item.get("importance", 0), default=0)
+        sentiment_score = float(pd.to_numeric(item.get("sentiment_score"), errors="coerce") or 0.0)
+        publish_time = pd.to_datetime(item.get("publish_time"), errors="coerce")
+        age_hours = 24.0 if pd.isna(publish_time) else max(
+            0.0,
+            (pd.Timestamp.now() - publish_time).total_seconds() / 3600.0,
+        )
+        recency_factor = 1.0 if age_hours <= 6 else 0.75 if age_hours <= 24 else 0.45
+        impact = sentiment_score * importance * 8 * recency_factor
+        score += impact
+
+        title = str(item.get("title") or "-")
+        if importance >= 4:
+            high_importance_count += 1
+        if sentiment == "positive":
+            positive_flags.append(title)
+        elif sentiment == "negative":
+            risk_flags.append(title)
+
+        items.append(
+            {
+                "时间": str(item.get("publish_time") or "-"),
+                "来源": str(item.get("source") or "-"),
+                "情绪": "偏正面" if sentiment == "positive" else "偏负面" if sentiment == "negative" else "中性",
+                "重要性": importance,
+                "标题": title,
+            }
+        )
+
+    score = max(0, min(100, round(score)))
+    if score >= 65:
+        state = "偏正面"
+        conclusion = "近期新闻整体偏正面，短期催化和市场关注度对股价表现相对有利。"
+    elif score <= 35:
+        state = "偏负面"
+        conclusion = "近期新闻整体偏负面，短期扰动和风险事件需要更高权重对待。"
+    else:
+        state = "中性"
+        conclusion = "近期新闻整体中性，更多用于补充解释短期扰动，不单独改变最终结论。"
+
+    summary = {
+        "available": True,
+        "headline": "实时新闻层已接入，用于补足事件面之外的短期新闻流。",
+        "state": state,
+        "score": score,
+        "items": items,
+        "conclusion": conclusion,
+        "high_importance_count": high_importance_count,
+        "positive_flags": positive_flags[:4],
+        "risk_flags": risk_flags[:4],
+    }
+
+    explanations = summary["positive_flags"][:2] or ["近期没有显著正面新闻催化"]
+    risks = summary["risk_flags"][:2] or ["近期没有显著负面新闻冲击，新闻层暂不下调"]
     return summary, explanations, risks
 
 
@@ -668,9 +753,10 @@ def _extract_industry_comparison_view(comparison_results: list[dict] | None) -> 
         return None, None, [], [], False
 
     plugin_weights = {
-        "industry_peers": 0.45,
-        "industry_valuation": 0.25,
-        "industry_growth": 0.30,
+        "industry_peers": 0.35,
+        "industry_valuation": 0.20,
+        "industry_growth": 0.25,
+        "industry_heat": 0.20,
     }
     weighted_scores: list[tuple[float, float]] = []
     conclusions: list[str] = []
@@ -860,6 +946,455 @@ def _build_hold_or_sell_view(metrics: dict, trend_score: int, latest: pd.Series)
     return "趋势保护不足，若已有盈利可优先落袋，若被套则更要严格执行止损。"
 
 
+def _risk_level_from_score(score: float, reverse: bool = False) -> str:
+    score = float(score)
+    if reverse:
+        if score >= 75:
+            return "低"
+        if score >= 55:
+            return "中"
+        return "高"
+    if score <= 35:
+        return "低"
+    if score <= 65:
+        return "中"
+    return "高"
+
+
+def _build_risk_committee_summary(
+    metrics: dict,
+    trend_score: int,
+    fundamental_score: int,
+    event_score: int,
+    event_state: str,
+    industry_score: int | None,
+    market_sentiment_state: str,
+    valuation_snapshot: dict | None,
+) -> dict:
+    close = metrics["close"]
+    market_value = pd.to_numeric((valuation_snapshot or {}).get("market_value"), errors="coerce")
+
+    trend_risk_score = 25.0 if trend_score >= 75 else 55.0 if trend_score >= 55 else 78.0
+    if close < metrics["ma20"]:
+        trend_risk_score += 10
+    if metrics["dif"] < metrics["dea"]:
+        trend_risk_score += 8
+    trend_risk_score = max(0.0, min(100.0, trend_risk_score))
+
+    fundamental_risk_score = 100.0 - float(fundamental_score)
+    if pd.notna(market_value) and float(market_value) < 5_000_000_000:
+        fundamental_risk_score += 8
+    fundamental_risk_score = max(0.0, min(100.0, fundamental_risk_score))
+
+    if event_state == "偏利空":
+        event_risk_score = max(60.0, 100.0 - float(event_score))
+    elif event_state == "偏利多":
+        event_risk_score = max(10.0, 50.0 - float(event_score) * 0.3)
+    else:
+        event_risk_score = max(20.0, 60.0 - float(event_score) * 0.3)
+    event_risk_score = max(0.0, min(100.0, event_risk_score))
+
+    industry_effective_score = 50 if industry_score is None else float(industry_score)
+    industry_risk_score = 100.0 - industry_effective_score
+    if market_sentiment_state == "偏弱":
+        industry_risk_score += 10
+    industry_risk_score = max(0.0, min(100.0, industry_risk_score))
+
+    overall_risk_score = (
+        trend_risk_score * 0.35
+        + fundamental_risk_score * 0.25
+        + event_risk_score * 0.20
+        + industry_risk_score * 0.20
+    )
+
+    return {
+        "headline": "这层不是再给结论打分，而是把趋势、基本面、事件和行业/组合暴露拆成风险维度做二次审视。",
+        "overall_level": _risk_level_from_score(overall_risk_score),
+        "trend_risk": {
+            "level": _risk_level_from_score(trend_risk_score),
+            "summary": (
+                "股价仍在 20 日线和关键支撑位上方，趋势保护尚可。"
+                if trend_risk_score <= 35
+                else "趋势保护一般，短线需要继续跟踪均线和 MACD 动能。"
+                if trend_risk_score <= 65
+                else "趋势保护偏弱，均线和动能已出现同步走弱迹象。"
+            ),
+        },
+        "fundamental_risk": {
+            "level": _risk_level_from_score(fundamental_risk_score),
+            "summary": (
+                "基本面提供了较好的质量保护。"
+                if fundamental_risk_score <= 35
+                else "基本面保护中性，暂时不构成强支撑也不算明显拖累。"
+                if fundamental_risk_score <= 65
+                else "基本面保护偏弱，若趋势转弱会缺少足够缓冲。"
+            ),
+        },
+        "event_risk": {
+            "level": _risk_level_from_score(event_risk_score),
+            "summary": (
+                "近期事件面对结论没有明显负反馈。"
+                if event_risk_score <= 35
+                else "近期事件整体中性，更多起到解释作用。"
+                if event_risk_score <= 65
+                else "近期事件面对结论存在明显扰动，需要提高警惕。"
+            ),
+        },
+        "industry_portfolio_risk": {
+            "level": _risk_level_from_score(industry_risk_score),
+            "summary": (
+                "行业相对位置和市场环境较友好，叠加到组合层时压力不大。"
+                if industry_risk_score <= 35
+                else "行业位置中性，单票可以跟踪，但放进组合后仍要看集中度。"
+                if industry_risk_score <= 65
+                else "行业相对位置或当前市场环境偏弱，进入组合时要更重视暴露控制。"
+            ),
+        },
+    }
+
+
+def _build_research_workflow_summary(
+    recommendation: str,
+    final_decision_basis: str,
+    technical_reasons: list[str],
+    reasons: list[str],
+    risks: list[str],
+    metrics: dict,
+    market_sentiment_state: str,
+    event_state: str,
+    industry_conclusion: str | None,
+    hold_or_sell_view: str,
+) -> dict:
+    bullish_points = list(dict.fromkeys(technical_reasons[:2] + reasons[:3]))
+    bearish_points = list(dict.fromkeys(risks[:4]))
+
+    if recommendation == "推荐关注":
+        stance = "正向研究"
+        action_bias = "更适合顺趋势跟踪，等待回踩确认或突破后的执行点。"
+        next_review_window = "1-3 个交易日内复核量能、均线和事件变化。"
+    elif recommendation == "中性观察":
+        stance = "观察研究"
+        action_bias = "先放入重点观察池，等趋势或催化进一步明确。"
+        next_review_window = "3-5 个交易日内复核是否出现新的催化或趋势确认。"
+    else:
+        stance = "保守研究"
+        action_bias = "当前不适合积极配置，优先观察风险是否缓释。"
+        next_review_window = "等待趋势修复或基本面/事件出现新的改善信号。"
+
+    thesis_parts = [final_decision_basis]
+    thesis_parts.append(hold_or_sell_view)
+    if industry_conclusion:
+        thesis_parts.append(f"行业侧补充：{industry_conclusion}")
+
+    tracking_indicators = [
+        {
+            "跟踪项": "趋势与位置",
+            "当前状态": f"收盘 {metrics['close']:.2f} / MA20 {metrics['ma20']:.2f} / MA60 {metrics['ma60']:.2f}",
+            "关注点": "确认股价是否继续站稳 20 日线并维持中期多头结构。",
+        },
+        {
+            "跟踪项": "量能与动能",
+            "当前状态": f"量比 {metrics['volume_ratio_10d']:.2f} / RSI {metrics['rsi14']:.1f} / MACD柱 {metrics['macd_hist']:.3f}",
+            "关注点": "观察放量是否持续，以及 MACD 动能是否继续扩张。",
+        },
+        {
+            "跟踪项": "市场与事件",
+            "当前状态": f"市场情绪 {market_sentiment_state} / 事件状态 {event_state}",
+            "关注点": "顺风市场和正向催化更利于信号兑现，逆风环境要降预期。",
+        },
+    ]
+
+    invalidation_conditions = [
+        f"若股价跌破 20 日线 {metrics['ma20']:.2f} 且 MACD 同步转弱，本轮趋势假设需要重审。",
+        f"若股价跌破支撑位 {metrics['support']:.2f} 附近，说明下方承接失效，原有交易节奏应失效。",
+    ]
+    if event_state == "偏利空":
+        invalidation_conditions.append("若新的负面公告继续落地，事件面会优先否定当前观察逻辑。")
+    if market_sentiment_state == "偏弱":
+        invalidation_conditions.append("若市场继续处于逆风环境，即便个股自身不差，也要降低执行强度。")
+
+    return {
+        "stance": stance,
+        "action_bias": action_bias,
+        "next_review_window": next_review_window,
+        "investment_thesis": "；".join(part for part in thesis_parts if part),
+        "bullish_points": bullish_points,
+        "bearish_points": bearish_points,
+        "tracking_indicators": tracking_indicators,
+        "invalidation_conditions": invalidation_conditions,
+    }
+
+
+def _evaluation_level(score: float, high: float = 75.0, medium: float = 55.0) -> str:
+    score = float(score)
+    if score >= high:
+        return "强支撑"
+    if score >= medium:
+        return "中性"
+    return "拖累项"
+
+
+def _build_evaluation_framework_summary(
+    recommendation: str,
+    technical_recommendation: str,
+    trend_score: int,
+    fundamental_score: int,
+    market_sentiment_score: int,
+    market_sentiment_state: str,
+    event_score: int,
+    event_state: str,
+    industry_score: int | None,
+    risk_committee_summary: dict,
+) -> dict:
+    risk_level = str(risk_committee_summary.get("overall_level") or "中")
+    risk_inverse_score = {"低": 85.0, "中": 60.0, "高": 30.0}.get(risk_level, 60.0)
+    effective_industry_score = 50.0 if industry_score is None else float(industry_score)
+
+    items = [
+        {
+            "维度": "技术面",
+            "当前判断": technical_recommendation,
+            "评分": int(trend_score),
+            "角色": "趋势、均线、动量与量价结构",
+            "结论": _evaluation_level(trend_score),
+        },
+        {
+            "维度": "基本面",
+            "当前判断": "质量支撑" if fundamental_score >= 60 else "中性" if fundamental_score >= 45 else "偏弱",
+            "评分": int(fundamental_score),
+            "角色": "盈利质量、现金流、负债与估值保护",
+            "结论": _evaluation_level(fundamental_score),
+        },
+        {
+            "维度": "市场情绪",
+            "当前判断": market_sentiment_state,
+            "评分": int(market_sentiment_score),
+            "角色": "市场顺风 / 逆风环境校正",
+            "结论": _evaluation_level(market_sentiment_score, high=70.0, medium=45.0),
+        },
+        {
+            "维度": "事件驱动",
+            "当前判断": event_state,
+            "评分": int(event_score),
+            "角色": "公告、预告、披露与事件催化",
+            "结论": _evaluation_level(event_score, high=70.0, medium=45.0),
+        },
+        {
+            "维度": "行业比较",
+            "当前判断": "行业内偏强" if effective_industry_score >= 65 else "行业内居中" if effective_industry_score >= 45 else "行业内偏弱",
+            "评分": int(round(effective_industry_score)),
+            "角色": "同行质量与相对位置",
+            "结论": _evaluation_level(effective_industry_score, high=65.0, medium=45.0),
+        },
+        {
+            "维度": "风险校正",
+            "当前判断": f"风险等级 {risk_level}",
+            "评分": int(round(risk_inverse_score)),
+            "角色": "把趋势、基本面、事件和行业暴露做二次约束",
+            "结论": _evaluation_level(risk_inverse_score, high=75.0, medium=55.0),
+        },
+    ]
+
+    overall_score = round(
+        trend_score * 0.26
+        + fundamental_score * 0.22
+        + market_sentiment_score * 0.14
+        + event_score * 0.14
+        + effective_industry_score * 0.12
+        + risk_inverse_score * 0.12
+    )
+
+    return {
+        "headline": "这层借鉴了 TradingAgents-CN 的 analyst 分维思路，但继续使用当前项目自己的评分与推荐内核，不直接照搬多智能体辩论。",
+        "overall_score": int(overall_score),
+        "overall_stance": recommendation,
+        "items": items,
+    }
+
+
+def _build_target_price_scenarios(
+    metrics: dict,
+    recommendation: str,
+    fundamental_score: int,
+    market_sentiment_state: str,
+    event_state: str,
+    risk_committee_summary: dict,
+) -> dict:
+    close = float(metrics["close"])
+    risk_level = str(risk_committee_summary.get("overall_level") or "中")
+    if recommendation == "推荐关注":
+        base_upside = 0.14
+        bull_upside = 0.24
+        bear_change = -0.06
+    elif recommendation == "中性观察":
+        base_upside = 0.07
+        bull_upside = 0.14
+        bear_change = -0.08
+    else:
+        base_upside = 0.02
+        bull_upside = 0.08
+        bear_change = -0.12
+
+    if fundamental_score >= 70:
+        base_upside += 0.03
+        bull_upside += 0.04
+    elif fundamental_score <= 40:
+        base_upside -= 0.03
+        bull_upside -= 0.04
+
+    if market_sentiment_state == "偏强":
+        base_upside += 0.02
+        bull_upside += 0.02
+    elif market_sentiment_state == "偏弱":
+        base_upside -= 0.02
+        bull_upside -= 0.03
+
+    if event_state == "偏利多":
+        bull_upside += 0.03
+    elif event_state == "偏利空":
+        base_upside -= 0.03
+        bear_change -= 0.02
+
+    if risk_level == "高":
+        base_upside -= 0.03
+        bull_upside -= 0.05
+        bear_change -= 0.03
+    elif risk_level == "低":
+        base_upside += 0.01
+
+    base_upside = max(0.01, base_upside)
+    bull_upside = max(base_upside + 0.04, bull_upside)
+    bear_change = min(-0.02, bear_change)
+
+    scenarios = [
+        {
+            "情景": "保守",
+            "目标价": round(close * (1 + bear_change), 2),
+            "涨跌幅": f"{bear_change:.1%}",
+            "时间范围": "1-4 周",
+            "触发条件": "市场转弱、事件扰动或趋势跌破支撑位时参考该情景。",
+        },
+        {
+            "情景": "基准",
+            "目标价": round(close * (1 + base_upside), 2),
+            "涨跌幅": f"{base_upside:.1%}",
+            "时间范围": "1-3 个月",
+            "触发条件": "当前研究结论按正常兑现节奏推进时参考该情景。",
+        },
+        {
+            "情景": "乐观",
+            "目标价": round(close * (1 + bull_upside), 2),
+            "涨跌幅": f"{bull_upside:.1%}",
+            "时间范围": "3-6 个月",
+            "触发条件": "趋势延续、基本面验证和事件催化同时增强时参考该情景。",
+        },
+    ]
+
+    return {
+        "headline": "这层借鉴了 TradingAgents-CN 的目标价拆解方式，但改成规则化情景推演，避免对单一模型输出过度依赖。",
+        "currency": "CNY",
+        "current_price": round(close, 2),
+        "base_case_price": scenarios[1]["目标价"],
+        "bull_case_price": scenarios[2]["目标价"],
+        "bear_case_price": scenarios[0]["目标价"],
+        "items": scenarios,
+    }
+
+
+def _build_execution_plan_summary(
+    recommendation: str,
+    technical_recommendation: str,
+    metrics: dict,
+    target_price_scenarios: dict,
+    risk_committee_summary: dict,
+    market_sentiment_state: str,
+    event_state: str,
+    hold_or_sell_view: str,
+) -> dict:
+    risk_level = str(risk_committee_summary.get("overall_level") or "中")
+    close = float(metrics["close"])
+    stop_loss = round(min(metrics["support"], metrics["ma20"]) * 0.99, 2)
+    first_take_profit = float(target_price_scenarios.get("base_case_price") or close)
+    second_take_profit = float(target_price_scenarios.get("bull_case_price") or close)
+
+    if recommendation == "推荐关注":
+        trade_action = "试探买入"
+        base_position = "20%-30%"
+        action_reason = "研究结论偏正向，可以开始观察买点并做小仓位试错。"
+    elif recommendation == "中性观察":
+        trade_action = "观察等待"
+        base_position = "0%-10%"
+        action_reason = "研究层还不够统一，更适合先观察而不是立即重仓。"
+    else:
+        trade_action = "减仓 / 回避"
+        base_position = "0%"
+        action_reason = "当前结论不支持积极配置，应先回避高风险执行。"
+
+    risk_adjusted_action = trade_action
+    adjusted_position = base_position
+    risk_adjustment_notes = []
+
+    if risk_level == "高":
+        if trade_action == "试探买入":
+            risk_adjusted_action = "观察等待"
+            adjusted_position = "0%-10%"
+        elif trade_action == "观察等待":
+            adjusted_position = "0%"
+        risk_adjustment_notes.append("整体风险等级偏高，执行动作下调一档。")
+    elif risk_level == "中" and trade_action == "试探买入":
+        adjusted_position = "10%-20%"
+        risk_adjustment_notes.append("整体风险中性，仓位建议从进攻型下调到试错型。")
+
+    if market_sentiment_state == "偏弱":
+        risk_adjustment_notes.append("市场处于逆风环境，优先等确认而不是追高。")
+    if event_state == "偏利空":
+        risk_adjustment_notes.append("事件层存在负反馈，目标价与仓位都应保守处理。")
+    if technical_recommendation == "减仓防守" and risk_adjusted_action == "试探买入":
+        risk_adjusted_action = "观察等待"
+        adjusted_position = "0%-10%"
+        risk_adjustment_notes.append("技术面仍偏防守，执行动作不应过于积极。")
+
+    confidence_score = 72.0 if recommendation == "推荐关注" else 56.0 if recommendation == "中性观察" else 38.0
+    if risk_level == "高":
+        confidence_score -= 10
+    elif risk_level == "低":
+        confidence_score += 6
+    if event_state == "偏利多":
+        confidence_score += 4
+    elif event_state == "偏利空":
+        confidence_score -= 6
+    confidence_score = max(5.0, min(95.0, confidence_score))
+
+    execution_risk_score = 70.0 if risk_level == "高" else 48.0 if risk_level == "中" else 26.0
+    if market_sentiment_state == "偏弱":
+        execution_risk_score += 8
+    if event_state == "偏利空":
+        execution_risk_score += 8
+    execution_risk_score = max(0.0, min(100.0, execution_risk_score))
+
+    trigger_to_upgrade = "放量站稳压力位、事件转正或市场情绪改善后，可把观察升级为试探买入。"
+    trigger_to_downgrade = f"跌破 {stop_loss:.2f} 附近，或事件继续转弱时，应把当前计划降级为减仓 / 回避。"
+
+    return {
+        "headline": "这层把研究结论转成可执行动作，借鉴 TradingAgents-CN 的 trader / risk manager 思路，但用规则化方式实现。",
+        "trade_action": trade_action,
+        "risk_adjusted_action": risk_adjusted_action,
+        "position_guidance": adjusted_position,
+        "base_position": base_position,
+        "target_price_range": f"{first_take_profit:.2f} - {second_take_profit:.2f}",
+        "stop_loss": stop_loss,
+        "first_take_profit": round(first_take_profit, 2),
+        "second_take_profit": round(second_take_profit, 2),
+        "execution_confidence": int(round(confidence_score)),
+        "execution_risk_score": int(round(execution_risk_score)),
+        "action_reasoning": action_reason,
+        "risk_adjustment_notes": risk_adjustment_notes,
+        "trigger_to_upgrade": trigger_to_upgrade,
+        "trigger_to_downgrade": trigger_to_downgrade,
+        "execution_commentary": hold_or_sell_view,
+    }
+
+
 def _build_candlestick_chart(chart_df: pd.DataFrame):
     base = alt.Chart(chart_df).encode(x=alt.X("date:T", title="日期"))
     rule = base.mark_rule().encode(
@@ -927,6 +1462,14 @@ def analyze_single_stock(symbol: str, name: str, prefer_cache_only: bool = False
     market_sentiment_summary, market_sentiment_explanations, market_sentiment_risks = _build_market_sentiment_view(
         market_sentiment_snapshot
     )
+    news_items = load_or_fetch_realtime_stock_news(
+        symbol,
+        fallback_name=name,
+        prefer_cache=prefer_cache_only,
+        lookback_hours=72,
+        limit=12,
+    )
+    news_summary, news_explanations, news_risks = _build_news_summary(news_items)
     company_events = load_or_fetch_company_events(symbol, fallback_name=name, lookback_days=30)
     event_summary, event_explanations, event_risks = _build_event_summary(company_events)
     comparison_results, comparison_overview = build_comparison_results(
@@ -936,6 +1479,7 @@ def analyze_single_stock(symbol: str, name: str, prefer_cache_only: bool = False
             "fundamental_snapshot": fundamental_snapshot,
             "valuation_snapshot": valuation_snapshot,
             "market_sentiment_snapshot": market_sentiment_snapshot,
+            "news_items": news_items,
             "company_events": company_events,
             "industry_membership": industry_membership,
             "metrics": metrics,
@@ -971,8 +1515,59 @@ def analyze_single_stock(symbol: str, name: str, prefer_cache_only: bool = False
         industry_positive_flags,
         industry_risk_flags,
     )
-
-    return {
+    risk_committee_summary = _build_risk_committee_summary(
+        metrics,
+        trend_score,
+        fundamental_score,
+        _safe_int(event_summary.get("score", 50), default=50),
+        str(event_summary.get("state", "中性")),
+        industry_comparison_score,
+        str(market_sentiment_summary.get("state", "中性")),
+        valuation_snapshot,
+    )
+    research_workflow_summary = _build_research_workflow_summary(
+        recommendation,
+        final_decision_basis,
+        technical_reasons,
+        reasons,
+        risks,
+        metrics,
+        str(market_sentiment_summary.get("state", "中性")),
+        str(event_summary.get("state", "中性")),
+        industry_comparison_conclusion,
+        hold_or_sell_view,
+    )
+    evaluation_framework_summary = _build_evaluation_framework_summary(
+        recommendation,
+        technical_recommendation,
+        trend_score,
+        fundamental_score,
+        _safe_int(market_sentiment_summary.get("score", 50), default=50),
+        str(market_sentiment_summary.get("state", "中性")),
+        _safe_int(event_summary.get("score", 50), default=50),
+        str(event_summary.get("state", "中性")),
+        industry_comparison_score,
+        risk_committee_summary,
+    )
+    target_price_scenarios = _build_target_price_scenarios(
+        metrics,
+        recommendation,
+        fundamental_score,
+        str(market_sentiment_summary.get("state", "中性")),
+        str(event_summary.get("state", "中性")),
+        risk_committee_summary,
+    )
+    execution_plan_summary = _build_execution_plan_summary(
+        recommendation,
+        technical_recommendation,
+        metrics,
+        target_price_scenarios,
+        risk_committee_summary,
+        str(market_sentiment_summary.get("state", "中性")),
+        str(event_summary.get("state", "中性")),
+        hold_or_sell_view,
+    )
+    result = {
         "symbol": symbol,
         "name": name,
         "metrics": metrics,
@@ -999,6 +1594,12 @@ def analyze_single_stock(symbol: str, name: str, prefer_cache_only: bool = False
         "market_sentiment_state": str(market_sentiment_summary.get("state", "中性")),
         "market_sentiment_explanations": market_sentiment_explanations,
         "market_sentiment_risks": market_sentiment_risks,
+        "news_items": news_items,
+        "news_summary": news_summary,
+        "news_score": _safe_int(news_summary.get("score", 50), default=50),
+        "news_state": str(news_summary.get("state", "中性")),
+        "news_explanations": news_explanations,
+        "news_risks": news_risks,
         "company_events": company_events,
         "event_summary": event_summary,
         "event_score": _safe_int(event_summary.get("score", 50), default=50),
@@ -1006,6 +1607,11 @@ def analyze_single_stock(symbol: str, name: str, prefer_cache_only: bool = False
         "event_explanations": event_explanations,
         "event_risks": event_risks,
         "final_decision_basis": final_decision_basis,
+        "research_workflow_summary": research_workflow_summary,
+        "risk_committee_summary": risk_committee_summary,
+        "evaluation_framework_summary": evaluation_framework_summary,
+        "target_price_scenarios": target_price_scenarios,
+        "execution_plan_summary": execution_plan_summary,
         "chart": chart,
         "data_source": df.attrs.get("api_source", "unknown"),
         "fundamental_snapshot": fundamental_snapshot,
@@ -1018,6 +1624,8 @@ def analyze_single_stock(symbol: str, name: str, prefer_cache_only: bool = False
         "industry_comparison_conclusion": industry_comparison_conclusion,
         "industry_comparison_available": industry_comparison_available,
     }
+    result["data_source_summary"] = build_analysis_data_source_summary(result)
+    return result
 
 
 def _screen_one_accumulation_candidate(row: pd.Series) -> dict | None:

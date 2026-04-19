@@ -1,5 +1,4 @@
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -72,6 +71,18 @@ from utils.cache_manager import (
     write_cache,
     load_dataframe,
 )
+from web.panels.analysis import (
+    render_data_source_panel,
+    render_evaluation_framework_panel,
+    render_execution_plan_panel,
+    render_news_panel,
+    render_research_workflow_panel,
+    render_risk_committee_panel,
+    render_target_price_panel,
+)
+from web.panels.docs_admin import render_docs_hub_panel as render_docs_hub_panel_view
+from web.panels.workflow import render_async_task_center, render_research_workbench_home
+from web.task_manager import list_async_tasks, read_async_task_result, start_async_task
 
 
 st.set_page_config(page_title="统一评分选股系统", layout="wide")
@@ -101,6 +112,11 @@ DOC_LIBRARY = [
         "role": "看模块职责、数据流和页面入口。",
     },
     {
+        "label": "TradingAgents-CN 借鉴路线图",
+        "path": DOCS_ROOT / "current" / "TRADINGAGENTS_CN_REFERENCE_PLAN.md",
+        "role": "看外部项目哪些能力值得借，以及当前分阶段怎么吸收。",
+    },
+    {
         "label": "专业化修补追踪表",
         "path": DOCS_ROOT / "current" / "PROFESSIONALIZATION_TRACKER.md",
         "role": "看能力建设做到哪一步、下一步优先级是什么。",
@@ -121,6 +137,58 @@ DOC_LIBRARY = [
         "role": "看以后应该怎么补文档。",
     },
 ]
+
+
+def _start_accumulation_scan_task(scan_limit: int, top_k: int, config_json: str) -> str:
+    def runner(progress_callback):
+        progress_callback(0.10, "正在读取股票池并准备量价代理候选扫描。")
+        result_df = screen_accumulation_candidates(
+            scan_limit=scan_limit,
+            top_k=top_k,
+            config=normalize_scoring_config(json.loads(config_json)),
+        )
+        progress_callback(1.0, f"量价代理候选扫描完成，共得到 {len(result_df)} 条结果。")
+        return result_df
+
+    return start_async_task(
+        task_type="accumulation_scan",
+        label=f"量价代理候选扫描 {scan_limit}/{top_k}",
+        params={"scan_limit": scan_limit, "top_k": top_k},
+        runner=runner,
+    )
+
+
+def _start_growth_scan_task(scan_limit: int, top_k: int, target_return: float, config_json: str) -> str:
+    def runner(progress_callback):
+        progress_callback(0.10, "正在读取股票池并准备中线候选扫描。")
+        result_df = recommend_growth_candidates(
+            scan_limit=scan_limit,
+            top_k=top_k,
+            target_return=target_return,
+            config=normalize_scoring_config(json.loads(config_json)),
+        )
+        progress_callback(1.0, f"中线候选扫描完成，共得到 {len(result_df)} 条结果。")
+        return result_df
+
+    return start_async_task(
+        task_type="growth_scan",
+        label=f"中线候选扫描 {scan_limit}/{top_k}/{target_return:.0%}",
+        params={"scan_limit": scan_limit, "top_k": top_k, "target_return": target_return},
+        runner=runner,
+    )
+
+
+def _start_workflow_task(task_type: str, label: str, params: dict, runner) -> str:
+    return start_async_task(task_type=task_type, label=label, params=params, runner=runner)
+
+
+def _restore_scan_task_to_session(task_id: str, session_key: str, error_key: str) -> bool:
+    restored = read_async_task_result(task_id)
+    if isinstance(restored, pd.DataFrame):
+        st.session_state[session_key] = restored
+        st.session_state[error_key] = None
+        return True
+    return False
 
 
 def _catalog_loader(limit: int) -> list[dict]:
@@ -197,118 +265,6 @@ def load_growth_candidates(scan_limit: int, top_k: int, target_return: float, co
 def load_db_status():
     init_db()
     return get_db_status()
-
-
-@st.cache_data(show_spinner=False)
-def read_doc_text(path_str: str) -> str:
-    path = Path(path_str)
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8")
-
-
-def extract_markdown_section(text: str, heading: str) -> str:
-    lines = text.splitlines()
-    section_lines: list[str] = []
-    collecting = False
-    heading_level = 0
-    for line in lines:
-        stripped = line.strip()
-        if stripped == heading:
-            collecting = True
-            heading_level = len(stripped) - len(stripped.lstrip("#"))
-            continue
-        if collecting and stripped.startswith("#"):
-            level = len(stripped) - len(stripped.lstrip("#"))
-            if level <= heading_level:
-                break
-        if collecting:
-            section_lines.append(line)
-    return "\n".join(section_lines).strip()
-
-
-def extract_nested_bullets(section: str, field_name: str, limit: int = 5) -> list[str]:
-    lines = section.splitlines()
-    values: list[str] = []
-    collecting = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith(f"- {field_name}："):
-            collecting = True
-            continue
-        if collecting:
-            if stripped.startswith("- ") and not line.startswith("  - "):
-                break
-            if line.startswith("  - "):
-                values.append(line.strip()[2:].strip())
-                if len(values) >= limit:
-                    break
-    return values
-
-
-def parse_release_note_summaries(text: str, limit: int = 3) -> list[dict[str, object]]:
-    pattern = re.compile(r"^### (\d{4}-\d{2}-\d{2}) - 修补记录$", re.MULTILINE)
-    matches = list(pattern.finditer(text))
-    summaries: list[dict[str, object]] = []
-    for index, match in enumerate(matches[:limit]):
-        start = match.end()
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        section = text[start:end]
-        goal_match = re.search(r"- 本次目标：(.*)", section)
-        goal = goal_match.group(1).strip() if goal_match else ""
-        additions = extract_nested_bullets(section, "本次新增", limit=4)
-        risks = extract_nested_bullets(section, "风险或遗留问题", limit=3)
-        summaries.append(
-            {
-                "日期": match.group(1),
-                "本次目标": goal or "-",
-                "本次新增": additions,
-                "风险或遗留问题": risks,
-            }
-        )
-    return summaries
-
-
-def parse_tracker_progress(text: str) -> pd.DataFrame:
-    section = extract_markdown_section(text, "### 当前进展总览")
-    rows: list[dict[str, str]] = []
-    for line in section.splitlines():
-        match = re.match(r"^\d+\.\s+([^：]+)：系统接入状态\s+`([^`]+)`\s+\|\s+机构成熟度\s+`([^`]+)`", line.strip())
-        if match:
-            rows.append(
-                {
-                    "能力项": match.group(1).strip(),
-                    "系统接入状态": match.group(2).strip(),
-                    "机构成熟度": match.group(3).strip(),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-def parse_backlog_items(text: str, limit: int = 8) -> pd.DataFrame:
-    lines = text.splitlines()
-    rows: list[dict[str, str]] = []
-    current_title = ""
-    current_status = ""
-    current_impact = ""
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("### P"):
-            if current_title:
-                rows.append({"缺陷项": current_title, "当前状态": current_status or "-", "当前影响": current_impact or "-"})
-                if len(rows) >= limit:
-                    break
-            current_title = stripped.removeprefix("### ").strip()
-            current_status = ""
-            current_impact = ""
-            continue
-        if current_title and stripped.startswith("- 当前状态："):
-            current_status = stripped.split("：", 1)[1].replace("`", "").strip()
-        if current_title and stripped.startswith("- 当前影响："):
-            current_impact = stripped.split("：", 1)[1].strip()
-    if current_title and len(rows) < limit:
-        rows.append({"缺陷项": current_title, "当前状态": current_status or "-", "当前影响": current_impact or "-"})
-    return pd.DataFrame(rows)
 
 
 def bootstrap_cached_catalog(limit: int = 100) -> None:
@@ -411,10 +367,19 @@ def _format_pick_table(table: pd.DataFrame) -> pd.DataFrame:
         "score": "综合得分",
         "reason": "推荐理由",
         "action": "操作建议",
+        "industry_name": "行业",
+        "industry_heat_score": "行业热度分",
+        "weight": "组合权重",
+        "turnover_amount": "成交额估算",
         "momentum_raw": "20日动量",
         "reversal_raw": "5日反转",
         "volume_raw": "量比",
         "close_price": "最新收盘价",
+        "execution_confidence": "执行置信度",
+        "execution_risk_score": "执行风险分",
+        "risk_adjusted_action": "风险修正动作",
+        "position_guidance": "建议目标仓位",
+        "target_price_range": "目标价区间",
     }
     visible_cols = [
         col
@@ -422,6 +387,15 @@ def _format_pick_table(table: pd.DataFrame) -> pd.DataFrame:
             "display_name",
             "score",
             "action",
+            "industry_name",
+            "industry_heat_score",
+            "execution_confidence",
+            "execution_risk_score",
+            "risk_adjusted_action",
+            "position_guidance",
+            "target_price_range",
+            "weight",
+            "turnover_amount",
             "momentum_raw",
             "reversal_raw",
             "volume_raw",
@@ -437,8 +411,18 @@ def _format_pick_table(table: pd.DataFrame) -> pd.DataFrame:
         display_df["5日反转"] = display_df["5日反转"].map(lambda x: f"{x:.2%}" if pd.notna(x) else "")
     if "量比" in display_df.columns:
         display_df["量比"] = display_df["量比"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
+    if "组合权重" in display_df.columns:
+        display_df["组合权重"] = display_df["组合权重"].map(lambda x: f"{float(x):.2%}" if pd.notna(x) else "")
+    if "成交额估算" in display_df.columns:
+        display_df["成交额估算"] = display_df["成交额估算"].map(lambda x: f"{float(x):,.0f}" if pd.notna(x) else "")
     if "最新收盘价" in display_df.columns:
         display_df["最新收盘价"] = display_df["最新收盘价"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
+    if "行业热度分" in display_df.columns:
+        display_df["行业热度分"] = display_df["行业热度分"].map(lambda x: f"{float(x):.0f}" if pd.notna(x) else "")
+    if "执行置信度" in display_df.columns:
+        display_df["执行置信度"] = display_df["执行置信度"].map(lambda x: f"{int(float(x))}/100" if pd.notna(x) else "")
+    if "执行风险分" in display_df.columns:
+        display_df["执行风险分"] = display_df["执行风险分"].map(lambda x: f"{int(float(x))}/100" if pd.notna(x) else "")
     return display_df
 
 
@@ -452,6 +436,8 @@ def _current_pick_decision(row: pd.Series) -> dict:
     momentum = _safe_float(row.get("momentum_raw"))
     reversal = _safe_float(row.get("reversal_raw"))
     volume_ratio = _safe_float(row.get("volume_raw"), 1.0)
+    execution_confidence = _safe_float(row.get("execution_confidence"), 50.0)
+    execution_risk = _safe_float(row.get("execution_risk_score"), 50.0)
     action = row.get("action", "仅观察")
 
     if action == "重点关注" and score > 1:
@@ -480,7 +466,7 @@ def _current_pick_decision(row: pd.Series) -> dict:
         reasons.append(row.get("reason", "综合信号暂时不够集中"))
 
     invalidation = "跌破计划止损位且量能没有同步改善，就说明这次买入逻辑失效。"
-    risk_level = "中高" if reversal < -0.08 or volume_ratio > 2.5 else "中等"
+    risk_level = "中高" if reversal < -0.08 or volume_ratio > 2.5 or execution_risk >= 70 else "中等"
     fit = "更适合愿意分批试错的人" if decision != "暂不追买" else "更适合继续观察，不适合新手追涨"
 
     return {
@@ -493,6 +479,9 @@ def _current_pick_decision(row: pd.Series) -> dict:
         "失效条件": invalidation,
         "风险等级": risk_level,
         "适合人群": fit,
+        "执行置信度": f"{int(execution_confidence)}/100",
+        "风险修正动作": str(row.get("risk_adjusted_action") or "-"),
+        "目标价区间": str(row.get("target_price_range") or "-"),
     }
 
 
@@ -602,6 +591,7 @@ def _render_visual_decision_card(name: str, card: dict, rank: int | None = None)
 def render_current_pick(result: dict) -> None:
     current_pick = result["current_pick"]
     table = current_pick["table"]
+    risk_summary = current_pick.get("risk_summary") or {}
     beginner_mode = st.toggle("新手模式", value=True, key="current_pick_beginner_mode")
     decision_filter = st.selectbox(
         "交易卡筛选",
@@ -650,6 +640,23 @@ def render_current_pick(result: dict) -> None:
         ).sort_values("权重", ascending=False)
         st.write("当前信号使用的策略权重")
         st.dataframe(weights_df, use_container_width=True)
+
+    if risk_summary:
+        st.write("当前组合风险约束摘要")
+        risk_df = pd.DataFrame(
+            [
+                {"约束项": "最大单票权重", "当前设置": f"{float(risk_summary.get('max_position_weight', 0.0)):.0%}"},
+                {"约束项": "单行业最多持仓数", "当前设置": str(risk_summary.get("max_industry_positions", "-"))},
+                {"约束项": "最低成交额估算", "当前设置": f"{float(risk_summary.get('min_turnover_amount', 0.0)):,.0f}"},
+                {"约束项": "最低执行置信度", "当前设置": f"{int(risk_summary.get('min_execution_confidence', 0))}/100"},
+                {"约束项": "最高执行风险分", "当前设置": f"{int(risk_summary.get('max_execution_risk_score', 0))}/100"},
+                {"约束项": "低流动性被过滤", "当前设置": str(risk_summary.get("skipped_low_liquidity", 0))},
+                {"约束项": "执行层被过滤", "当前设置": str(risk_summary.get("skipped_execution_gate", 0))},
+                {"约束项": "行业上限被过滤", "当前设置": str(risk_summary.get("skipped_industry_cap", 0))},
+                {"约束项": "当前行业暴露", "当前设置": str(risk_summary.get("industry_exposure", {}))},
+            ]
+        )
+        st.dataframe(risk_df, use_container_width=True, hide_index=True)
 
     render_reason_guide()
 
@@ -847,6 +854,18 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
     final_cols[2].metric("市场情绪", str(analysis.get("market_sentiment_state", "未知")))
     final_cols[3].metric("事件驱动", str(analysis.get("event_state", "中性")))
     final_cols[4].metric("最终结论", str(analysis["recommendation"]))
+    st.divider()
+    render_execution_plan_panel(analysis)
+    st.divider()
+    render_target_price_panel(analysis)
+    st.divider()
+    render_evaluation_framework_panel(analysis)
+    st.divider()
+    render_data_source_panel(analysis)
+    st.divider()
+    render_research_workflow_panel(analysis)
+    st.divider()
+    render_risk_committee_panel(analysis)
 
     industry_membership = analysis.get("industry_membership") or {}
     industry_overview = analysis.get("comparison_overview") or []
@@ -933,6 +952,8 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
         st.write(f"- {market_sentiment_summary.get('conclusion', '')}")
     else:
         st.info(market_sentiment_summary.get("headline", "当前没有可用的市场情绪快照"))
+
+    render_news_panel(analysis)
 
     event_summary = analysis.get("event_summary", {})
     st.write("事件驱动摘要")
@@ -1276,7 +1297,11 @@ def render_accumulation_screener() -> None:
             )
         with col3:
             st.caption("扫描范围越大越全面，但第一次运行会更慢；已有缓存时会明显更快。")
-        submitted = st.form_submit_button("筛选量价代理候选股票")
+        submit_col1, submit_col2 = st.columns(2)
+        with submit_col1:
+            submitted = st.form_submit_button("直接筛选量价代理候选")
+        with submit_col2:
+            async_submitted = st.form_submit_button("后台启动筛选任务")
 
     if submitted:
         st.session_state.accumulation_scan_limit = scan_limit
@@ -1292,6 +1317,23 @@ def render_accumulation_screener() -> None:
             except DataFetchError as error:
                 st.session_state.accumulation_scan_result = None
                 st.session_state.accumulation_scan_error = str(error)
+    elif async_submitted:
+        st.session_state.accumulation_scan_limit = scan_limit
+        st.session_state.accumulation_top_k = top_k
+        task_id = _start_accumulation_scan_task(scan_limit, top_k, current_scoring_config_json)
+        st.success(f"后台任务已启动，任务 ID：{task_id}。你可以先离开这个页签，稍后再回来恢复结果。")
+
+    task_restore_id = render_async_task_center(
+        "量价代理候选后台任务",
+        lambda: list_async_tasks(["accumulation_scan"], limit=6),
+        key_prefix="accumulation_tasks",
+    )
+    if task_restore_id and _restore_scan_task_to_session(
+        task_restore_id,
+        "accumulation_scan_result",
+        "accumulation_scan_error",
+    ):
+        st.success("已从后台任务恢复量价代理候选结果。")
 
     if st.session_state.accumulation_scan_error:
         render_data_error(st.session_state.accumulation_scan_error)
@@ -1330,7 +1372,11 @@ def render_growth_candidate_panel() -> None:
             top_k = st.selectbox("输出候选数", [5, 10, 15], index=1)
         with col3:
             target_return = st.selectbox("目标收益", [0.20, 0.30, 0.50], index=1, format_func=lambda x: f"{x:.0%}")
-        submitted = st.form_submit_button("生成潜力候选")
+        submit_col1, submit_col2 = st.columns(2)
+        with submit_col1:
+            submitted = st.form_submit_button("直接生成潜力候选")
+        with submit_col2:
+            async_submitted = st.form_submit_button("后台启动筛选任务")
 
     if submitted:
         with st.spinner("正在筛选中线候选股票..."):
@@ -1345,6 +1391,21 @@ def render_growth_candidate_panel() -> None:
             except DataFetchError as error:
                 st.session_state.growth_candidate_result = None
                 st.session_state.growth_candidate_error = str(error)
+    elif async_submitted:
+        task_id = _start_growth_scan_task(scan_limit, top_k, target_return, current_scoring_config_json)
+        st.success(f"后台任务已启动，任务 ID：{task_id}。结果生成后可以直接在这里恢复。")
+
+    task_restore_id = render_async_task_center(
+        "中线候选后台任务",
+        lambda: list_async_tasks(["growth_scan"], limit=6),
+        key_prefix="growth_tasks",
+    )
+    if task_restore_id and _restore_scan_task_to_session(
+        task_restore_id,
+        "growth_candidate_result",
+        "growth_candidate_error",
+    ):
+        st.success("已从后台任务恢复中线候选结果。")
 
     if st.session_state.growth_candidate_error:
         render_data_error(st.session_state.growth_candidate_error)
@@ -1377,17 +1438,19 @@ def render_analysis_logic_panel() -> None:
     weights = {**DEFAULT_SCORING_CONFIG["weights"], **(config.get("weights") or {})}
     thresholds = {**DEFAULT_SCORING_CONFIG["thresholds"], **(config.get("thresholds") or {})}
     bonus = {**DEFAULT_SCORING_CONFIG["recommendation_bonus"], **(config.get("recommendation_bonus") or {})}
+    constraints = {**DEFAULT_SCORING_CONFIG["portfolio_constraints"], **(config.get("portfolio_constraints") or {})}
     recommendation_keys = list(DEFAULT_SCORING_CONFIG["recommendation_bonus"].keys())
 
     with st.form("scoring_config_form", clear_on_submit=False):
         st.write("统一评分参数")
-        weight_cols = st.columns(6)
+        weight_cols = st.columns(7)
         trend_weight = weight_cols[0].slider("趋势权重", 0.0, 1.0, float(weights["trend"]), 0.05)
         fundamental_weight = weight_cols[1].slider("基本面权重", 0.0, 1.0, float(weights["fundamental"]), 0.05)
         accumulation_weight = weight_cols[2].slider("吸筹权重", 0.0, 1.0, float(weights["accumulation"]), 0.05)
         sentiment_weight = weight_cols[3].slider("情绪权重", 0.0, 1.0, float(weights["sentiment"]), 0.05)
         industry_weight = weight_cols[4].slider("行业横向权重", 0.0, 1.0, float(weights["industry"]), 0.05)
         event_weight = weight_cols[5].slider("事件权重", 0.0, 1.0, float(weights["event"]), 0.05)
+        execution_weight = weight_cols[6].slider("执行层权重", 0.0, 1.0, float(weights["execution"]), 0.05)
 
         threshold_cols = st.columns(7)
         current_min_recommendation = thresholds["min_recommendation"]
@@ -1410,6 +1473,44 @@ def render_analysis_logic_panel() -> None:
         neutral_bonus = bonus_cols[1].slider(f"结论加减项: {recommendation_keys[1]}", -20, 20, int(bonus[recommendation_keys[1]]), 1)
         reject_bonus = bonus_cols[2].slider(f"结论加减项: {recommendation_keys[2]}", -20, 20, int(bonus[recommendation_keys[2]]), 1)
 
+        constraint_cols = st.columns(5)
+        max_position_weight = constraint_cols[0].slider(
+            "最大单票权重",
+            0.05,
+            0.30,
+            float(constraints["max_position_weight"]),
+            0.01,
+            format="%.2f",
+        )
+        max_industry_positions = constraint_cols[1].slider(
+            "单行业最多持仓数",
+            1,
+            5,
+            int(constraints["max_industry_positions"]),
+            1,
+        )
+        min_turnover_amount = constraint_cols[2].slider(
+            "最低成交额估算(万元)",
+            0,
+            20000,
+            int(float(constraints["min_turnover_amount"]) / 10000),
+            100,
+        )
+        min_execution_confidence = constraint_cols[3].slider(
+            "最低执行置信度",
+            0,
+            100,
+            int(constraints["min_execution_confidence"]),
+            1,
+        )
+        max_execution_risk_score = constraint_cols[4].slider(
+            "最高执行风险分",
+            0,
+            100,
+            int(constraints["max_execution_risk_score"]),
+            1,
+        )
+
         submitted = st.form_submit_button("应用统一评分参数")
 
     if submitted:
@@ -1422,6 +1523,7 @@ def render_analysis_logic_panel() -> None:
                     "sentiment": sentiment_weight,
                     "industry": industry_weight,
                     "event": event_weight,
+                    "execution": execution_weight,
                 },
                 "thresholds": {
                     "min_recommendation": min_recommendation,
@@ -1437,6 +1539,13 @@ def render_analysis_logic_panel() -> None:
                     recommendation_keys[1]: neutral_bonus,
                     recommendation_keys[2]: reject_bonus,
                 },
+                "portfolio_constraints": {
+                    "max_position_weight": max_position_weight,
+                    "max_industry_positions": max_industry_positions,
+                    "min_turnover_amount": min_turnover_amount * 10000,
+                    "min_execution_confidence": min_execution_confidence,
+                    "max_execution_risk_score": max_execution_risk_score,
+                },
             }
         )
         set_setting("unified_scoring_config", st.session_state.unified_scoring_config)
@@ -1449,6 +1558,7 @@ def render_analysis_logic_panel() -> None:
         weights = {**DEFAULT_SCORING_CONFIG["weights"], **(config.get("weights") or {})}
         thresholds = {**DEFAULT_SCORING_CONFIG["thresholds"], **(config.get("thresholds") or {})}
         bonus = {**DEFAULT_SCORING_CONFIG["recommendation_bonus"], **(config.get("recommendation_bonus") or {})}
+        constraints = {**DEFAULT_SCORING_CONFIG["portfolio_constraints"], **(config.get("portfolio_constraints") or {})}
 
     overview_df = pd.DataFrame(
         [
@@ -1553,6 +1663,9 @@ def render_analysis_logic_panel() -> None:
             {"条件": "min_growth_score", "当前值": thresholds["min_growth_score"], "用途": "中线候选的最低门槛"},
             {"条件": "min_industry_score", "当前值": thresholds["min_industry_score"], "用途": "过滤行业横向位置过弱个股"},
             {"条件": "min_event_score", "当前值": thresholds["min_event_score"], "用途": "过滤近期事件明显偏负面的个股"},
+            {"条件": "max_position_weight", "当前值": f"{float(constraints['max_position_weight']):.0%}", "用途": "限制单票权重过高"},
+            {"条件": "max_industry_positions", "当前值": constraints["max_industry_positions"], "用途": "限制单行业持仓过度集中"},
+            {"条件": "min_turnover_amount", "当前值": f"{float(constraints['min_turnover_amount']) / 10000:,.0f} 万元", "用途": "过滤成交额估算不足个股"},
         ]
     )
     st.write("统一阈值")
@@ -1563,111 +1676,6 @@ def render_analysis_logic_panel() -> None:
         with st.expander("打开股票分析逻辑文档"):
             st.markdown(logic_doc.read_text(encoding="utf-8"))
 
-
-def render_docs_hub_panel() -> None:
-    st.subheader("Docs 看板")
-    st.caption("这里把 docs 目录里的当前逻辑、专业化方向、缺陷 backlog 和历史修补记录集中到一个入口。")
-
-    docs_df = pd.DataFrame(
-        [
-            {
-                "文档": item["label"],
-                "位置": str(item["path"].relative_to(PROJECT_ROOT)),
-                "作用": item["role"],
-            }
-            for item in DOC_LIBRARY
-        ]
-    )
-    st.write("文档入口总览")
-    st.dataframe(docs_df.astype(str), use_container_width=True, hide_index=True)
-
-    release_text = read_doc_text(str(DOCS_ROOT / "history" / "RELEASE_NOTES.md"))
-    tracker_text = read_doc_text(str(DOCS_ROOT / "current" / "PROFESSIONALIZATION_TRACKER.md"))
-    backlog_text = read_doc_text(str(DOCS_ROOT / "current" / "PRIVATE_FUND_GAP_BACKLOG.md"))
-    readme_text = read_doc_text(str(DOCS_ROOT / "README.md"))
-
-    overview_tab, release_tab, direction_tab, issue_tab, raw_tab = st.tabs(
-        ["概览", "最近改动", "专业化方向", "问题清单", "文档原文"]
-    )
-
-    with overview_tab:
-        summary_cols = st.columns(3)
-        release_summaries = parse_release_note_summaries(release_text, limit=1)
-        tracker_df = parse_tracker_progress(tracker_text)
-        backlog_df = parse_backlog_items(backlog_text, limit=6)
-
-        with summary_cols[0]:
-            st.write("最近改了什么")
-            if release_summaries:
-                latest = release_summaries[0]
-                st.write(f"- 时间：{latest['日期']}")
-                st.write(f"- 目标：{latest['本次目标']}")
-                for item in latest["本次新增"]:
-                    st.write(f"- {item}")
-            else:
-                st.info("当前没有读到修补记录。")
-
-        with summary_cols[1]:
-            st.write("朝什么方向改")
-            if not tracker_df.empty:
-                st.dataframe(tracker_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("当前没有读到专业化追踪摘要。")
-
-        with summary_cols[2]:
-            st.write("现在还有哪些问题")
-            if not backlog_df.empty:
-                st.dataframe(backlog_df[["缺陷项", "当前状态"]], use_container_width=True, hide_index=True)
-            else:
-                st.info("当前没有读到缺陷清单。")
-
-        readme_section = extract_markdown_section(readme_text, "### 快速定位规则")
-        if readme_section:
-            with st.expander("怎么读这些文档", expanded=False):
-                st.markdown(readme_section)
-
-    with release_tab:
-        st.write("最近几次修补记录")
-        release_rows = []
-        for item in parse_release_note_summaries(release_text, limit=5):
-            release_rows.append(
-                {
-                    "日期": item["日期"],
-                    "本次目标": item["本次目标"],
-                    "新增要点": "；".join(item["本次新增"]) if item["本次新增"] else "-",
-                    "遗留问题": "；".join(item["风险或遗留问题"]) if item["风险或遗留问题"] else "-",
-                }
-            )
-        if release_rows:
-            st.dataframe(pd.DataFrame(release_rows).astype(str), use_container_width=True, hide_index=True)
-        else:
-            st.info("当前没有可展示的修补记录。")
-
-    with direction_tab:
-        st.write("专业化推进顺序")
-        tracker_df = parse_tracker_progress(tracker_text)
-        if not tracker_df.empty:
-            st.dataframe(tracker_df.astype(str), use_container_width=True, hide_index=True)
-        else:
-            st.info("当前没有可展示的专业化推进摘要。")
-
-    with issue_tab:
-        st.write("私募视角问题清单")
-        backlog_df = parse_backlog_items(backlog_text, limit=12)
-        if not backlog_df.empty:
-            st.dataframe(backlog_df.astype(str), use_container_width=True, hide_index=True)
-        else:
-            st.info("当前没有可展示的缺陷清单。")
-
-    with raw_tab:
-        selected_label = st.selectbox("选择要查看的文档", [item["label"] for item in DOC_LIBRARY], index=0)
-        selected_doc = next(item for item in DOC_LIBRARY if item["label"] == selected_label)
-        st.caption(f"当前查看：{selected_doc['path'].relative_to(PROJECT_ROOT)}")
-        doc_text = read_doc_text(str(selected_doc["path"]))
-        if doc_text:
-            st.markdown(doc_text)
-        else:
-            st.warning("当前文档不存在或尚未生成。")
 
 def render_live_paper_snapshot(auto_refresh: bool, interval_seconds: int) -> None:
     def _render_snapshot_content() -> None:
@@ -1976,6 +1984,28 @@ def render_evolution_panel(symbols: list[str], symbol_names: dict[str, str], cat
             )
             st.dataframe(display_runs, use_container_width=True)
 
+    workflow_task_restore_id = render_async_task_center(
+        "策略进化后台任务",
+        lambda: list_async_tasks(
+            ["market_sync", "daily_update", "industry_refresh", "parameter_optimization", "weekly_optimization"],
+            limit=8,
+        ),
+        key_prefix="workflow_tasks",
+    )
+    if workflow_task_restore_id:
+        restored_result = read_async_task_result(workflow_task_restore_id)
+        restored_task = next(
+            (item for item in list_async_tasks(limit=20) if item.get("id") == workflow_task_restore_id),
+            None,
+        )
+        if restored_task:
+            st.session_state.workflow_task_result = {
+                "task": restored_task,
+                "result": restored_result,
+            }
+            load_db_status.clear()
+            st.success(f"已恢复任务 {restored_task.get('label')} 的结果摘要。")
+
     if status["last_best"]:
         last_best = status["last_best"]
         st.info(
@@ -2056,138 +2086,100 @@ def render_evolution_panel(symbols: list[str], symbol_names: dict[str, str], cat
     left_col, right_col = st.columns(2)
     with left_col:
         if st.button("同步当前股票池行情到数据库", key="sync_market_data_button", disabled=not symbols):
-            with st.spinner("正在同步当前股票池行情..."):
-                sync_result = sync_market_data_to_db(symbols, catalog=catalog)
-            load_db_status.clear()
-            if sync_result["failed_symbols"]:
-                st.warning(
-                    f"已保存 {sync_result['saved_symbols']} 只、{sync_result['saved_rows']} 行数据，"
-                    f"但仍有 {sync_result['failed_symbols']} 只失败。"
-                )
-            else:
-                st.success(f"已保存 {sync_result['saved_symbols']} 只、{sync_result['saved_rows']} 行数据。")
+            selected_symbols = list(symbols)
+            selected_catalog = catalog.copy()
+
+            def sync_runner(progress_callback):
+                progress_callback(0.10, "正在同步当前股票池行情到数据库。")
+                result = sync_market_data_to_db(selected_symbols, catalog=selected_catalog)
+                progress_callback(1.0, "股票池行情同步完成。")
+                return result
+
+            task_id = _start_workflow_task(
+                "market_sync",
+                "同步当前股票池行情到数据库",
+                {"symbol_count": len(selected_symbols)},
+                sync_runner,
+            )
+            st.success(f"后台同步任务已启动，任务 ID：{task_id}。")
         if st.button("执行一次日常数据更新", key="run_daily_update_button"):
-            with st.spinner("正在执行日常数据更新..."):
-                try:
-                    update_result = run_daily_update(pool_size=automation_pool_size)
-                except DataFetchError as error:
-                    render_data_error(str(error))
-                else:
-                    load_db_status.clear()
-                    message = (
-                        f"日常更新完成：股票池 {update_result['catalog_size']} 只，"
-                        f"保存 {update_result['saved_symbols']} 只、{update_result['saved_rows']} 行数据。"
-                    )
-                    if update_result.get("degraded_reason"):
-                        st.warning(f"{message} 本次为降级运行。")
-                        st.caption(update_result["degraded_reason"])
-                    else:
-                        st.success(message)
+            def daily_runner(progress_callback):
+                progress_callback(0.10, "正在执行日常数据更新。")
+                result = run_daily_update(pool_size=automation_pool_size)
+                progress_callback(1.0, "日常数据更新完成。")
+                return result
+
+            task_id = _start_workflow_task(
+                "daily_update",
+                "执行一次日常数据更新",
+                {"pool_size": automation_pool_size},
+                daily_runner,
+            )
+            st.success(f"后台日更任务已启动，任务 ID：{task_id}。")
         if st.button("刷新行业归属主表", key="refresh_industry_membership_button"):
-            with st.spinner("正在刷新行业归属..."):
-                try:
-                    refresh_result = run_industry_membership_refresh(pool_size=automation_pool_size)
-                except DataFetchError as error:
-                    render_data_error(str(error))
-                except Exception as error:
-                    render_data_error(str(error))
-                else:
-                    load_db_status.clear()
-                    message = (
-                        f"行业归属刷新完成：{refresh_result['resolved']}/{refresh_result['catalog_size']} 已解析；"
-                        f"主表 {refresh_result['from_membership']}、估值回退 {refresh_result['from_valuation']}、"
-                        f"巨潮 {refresh_result['from_cninfo']}、实时接口 {refresh_result['from_live']}。"
-                    )
-                    if refresh_result.get("degraded_reason") or refresh_result.get("failed") or refresh_result.get("missing"):
-                        st.warning(message)
-                    else:
-                        st.success(message)
-                    st.caption(
-                        f"过期 {refresh_result.get('stale', 0)} | "
-                        f"缺失 {refresh_result.get('missing', 0)} | "
-                        f"失败 {refresh_result.get('failed', 0)}"
-                    )
-                    sample_resolutions = refresh_result.get("sample_resolutions") or []
-                    if sample_resolutions:
-                        st.dataframe(pd.DataFrame(sample_resolutions), use_container_width=True)
+            def industry_runner(progress_callback):
+                progress_callback(0.10, "正在刷新行业归属主表。")
+                result = run_industry_membership_refresh(pool_size=automation_pool_size)
+                progress_callback(1.0, "行业归属刷新完成。")
+                return result
+
+            task_id = _start_workflow_task(
+                "industry_refresh",
+                "刷新行业归属主表",
+                {"pool_size": automation_pool_size},
+                industry_runner,
+            )
+            st.success(f"后台行业刷新任务已启动，任务 ID：{task_id}。")
 
     with right_col:
         if st.button("运行一次统一参数优化", key="run_weekly_optimization_button", disabled=not symbols):
-            with st.spinner("正在运行统一参数优化..."):
-                try:
-                    optimization = run_strategy_parameter_optimization(
-                        symbols,
-                        run_unified_selection,
-                        symbol_names=symbol_names,
-                        strategy_name="unified_selection",
-                    )
-                except (BacktestError, DataFetchError) as error:
-                    render_data_error(str(error))
-                else:
-                    load_db_status.clear()
-                    best = optimization["best_config"]
-                    st.success(
-                        f"优化完成：最佳持仓 {best['top_n']} 只，调仓 {best['rebalance_days']} 天，"
-                        f"回看 {best['lookback_years']} 年。"
-                    )
-                    eval_df = pd.DataFrame(optimization["evaluations"][:10]).rename(
-                        columns={
-                            "stage": "阶段",
-                            "top_n": "持仓数",
-                            "rebalance_days": "调仓天数",
-                            "lookback_years": "回看年数",
-                            "total_return": "总收益",
-                            "max_drawdown": "最大回撤",
-                            "positive_period_ratio": "正收益占比",
-                            "base_objective_score": "基础目标分",
-                            "objective_score": "综合目标分",
-                            "stability_score": "稳定性",
-                            "stability_penalty": "稳定性惩罚",
-                            "robustness_bonus": "稳健性奖励",
-                        }
-                    )
-                    if "weights" in optimization["best_config"]:
-                        eval_df["趋势权重"] = eval_df["weights"].map(lambda x: (x or {}).get("trend"))
-                        eval_df["基本面权重"] = eval_df["weights"].map(lambda x: (x or {}).get("fundamental"))
-                        eval_df["吸筹权重"] = eval_df["weights"].map(lambda x: (x or {}).get("accumulation"))
-                        eval_df["情绪权重"] = eval_df["weights"].map(lambda x: (x or {}).get("sentiment"))
-                        eval_df["行业权重"] = eval_df["weights"].map(lambda x: (x or {}).get("industry"))
-                        eval_df["事件权重"] = eval_df["weights"].map(lambda x: (x or {}).get("event"))
-                    if "thresholds" in optimization["best_config"]:
-                        eval_df["最低推荐级别"] = eval_df["thresholds"].map(lambda x: (x or {}).get("min_recommendation"))
-                        eval_df["最低趋势分"] = eval_df["thresholds"].map(lambda x: (x or {}).get("min_trend_score"))
-                        eval_df["最低基本面分"] = eval_df["thresholds"].map(lambda x: (x or {}).get("min_fundamental_score"))
-                        eval_df["最低行业分"] = eval_df["thresholds"].map(lambda x: (x or {}).get("min_industry_score"))
-                        eval_df["最低事件分"] = eval_df["thresholds"].map(lambda x: (x or {}).get("min_event_score"))
-                    if "recommendation_bonus" in optimization["best_config"]:
-                        eval_df["推荐关注加分"] = eval_df["recommendation_bonus"].map(lambda x: (x or {}).get("推荐关注"))
-                        eval_df["暂不推荐扣分"] = eval_df["recommendation_bonus"].map(lambda x: (x or {}).get("暂不推荐"))
-                    for weight_col in ["趋势权重", "基本面权重", "吸筹权重", "情绪权重", "行业权重", "事件权重"]:
-                        if weight_col in eval_df.columns:
-                            eval_df[weight_col] = eval_df[weight_col].map(lambda x: f"{x:.2%}")
-                    for metric_col in ["总收益", "最大回撤", "正收益占比", "基础目标分", "综合目标分", "稳定性", "稳定性惩罚", "稳健性奖励"]:
-                        if metric_col in eval_df.columns:
-                            eval_df[metric_col] = eval_df[metric_col].map(lambda x: f"{x:.4f}")
-                    st.dataframe(eval_df, use_container_width=True)
-                    st.caption("这里展示的是统一评分口径下的参数搜索结果，不再是旧版多因子独立策略。")
+            selected_symbols = list(symbols)
+            selected_symbol_names = dict(symbol_names)
+
+            def optimize_runner(progress_callback):
+                progress_callback(0.10, "正在运行统一参数优化。")
+                result = run_strategy_parameter_optimization(
+                    selected_symbols,
+                    run_unified_selection,
+                    symbol_names=selected_symbol_names,
+                    strategy_name="unified_selection",
+                )
+                progress_callback(1.0, "统一参数优化完成。")
+                return result
+
+            task_id = _start_workflow_task(
+                "parameter_optimization",
+                "运行一次统一参数优化",
+                {"symbol_count": len(selected_symbols)},
+                optimize_runner,
+            )
+            st.success(f"后台优化任务已启动，任务 ID：{task_id}。")
         if st.button("执行每周自动优化流程", key="reload_database_status_button"):
-            with st.spinner("正在执行每周自动优化流程..."):
-                try:
-                    optimization = run_weekly_optimization(pool_size=automation_pool_size)
-                except (BacktestError, DataFetchError) as error:
-                    render_data_error(str(error))
-                else:
-                    load_db_status.clear()
-                    best = optimization["best_config"]
-                    message = (
-                        f"每周优化完成：持仓 {best['top_n']} / "
-                        f"调仓 {best['rebalance_days']} / 回看 {best['lookback_years']} 年。"
-                    )
-                    if optimization.get("degraded_reason"):
-                        st.warning(f"{message} 本次为降级运行。")
-                        st.caption(optimization["degraded_reason"])
-                    else:
-                        st.success(message)
+            def weekly_runner(progress_callback):
+                progress_callback(0.10, "正在执行每周自动优化流程。")
+                result = run_weekly_optimization(pool_size=automation_pool_size)
+                progress_callback(1.0, "每周自动优化流程完成。")
+                return result
+
+            task_id = _start_workflow_task(
+                "weekly_optimization",
+                "执行每周自动优化流程",
+                {"pool_size": automation_pool_size},
+                weekly_runner,
+            )
+            st.success(f"后台每周优化任务已启动，任务 ID：{task_id}。")
+
+    restored_task_payload = st.session_state.get("workflow_task_result")
+    if restored_task_payload:
+        task = restored_task_payload.get("task") or {}
+        result = restored_task_payload.get("result")
+        with st.expander(f"恢复结果：{task.get('label', '后台任务')}", expanded=False):
+            if isinstance(result, pd.DataFrame):
+                st.dataframe(result, use_container_width=True)
+            elif isinstance(result, dict):
+                st.json(result)
+            else:
+                st.write(result)
 
 
 if "symbols" not in st.session_state:
@@ -2218,6 +2210,8 @@ if "growth_candidate_result" not in st.session_state:
     st.session_state.growth_candidate_result = None
 if "growth_candidate_error" not in st.session_state:
     st.session_state.growth_candidate_error = None
+if "workflow_task_result" not in st.session_state:
+    st.session_state.workflow_task_result = None
 if "watchlist_error" not in st.session_state:
     st.session_state.watchlist_error = None
 if "watchlist_analysis_result" not in st.session_state:
@@ -2244,6 +2238,16 @@ tab_strategy, tab_single, tab_accumulation, tab_growth, tab_logic, tab_evolution
 )
 
 with tab_strategy:
+    render_research_workbench_home(
+        st.session_state.last_result,
+        lambda: list_async_tasks(
+            ["accumulation_scan", "growth_scan", "market_sync", "daily_update", "industry_refresh", "parameter_optimization", "weekly_optimization"],
+            limit=8,
+        ),
+        get_setting("last_daily_update", {}),
+        get_setting("last_weekly_optimization", {}),
+    )
+    st.divider()
     pool_col1, pool_col2, pool_col3 = st.columns(3)
     with pool_col1:
         pool_size = st.selectbox("股票池数量", [50, 100, 150, 200, 300, 500], index=1)
@@ -2410,4 +2414,4 @@ with tab_evolution:
     )
 
 with tab_docs:
-    render_docs_hub_panel()
+    render_docs_hub_panel_view(PROJECT_ROOT, DOCS_ROOT, DOC_LIBRARY)
