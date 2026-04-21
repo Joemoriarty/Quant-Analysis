@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
@@ -1050,7 +1052,7 @@ def render_single_stock_panel(symbol_names: dict[str, str]) -> None:
     st.dataframe(add_position_df, width="stretch")
 
     st.write("近期 K 线与均线")
-    st.altair_chart(analysis["chart"], width="stretch")
+    st.altair_chart(analysis["chart"], use_container_width=True)
 
 
 def render_watchlist_panel(symbol_names: dict[str, str]) -> None:
